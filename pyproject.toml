@@ -14,12 +14,22 @@ members = ["packages/*", "services/*"]
 kc-labels = { workspace = true }
 kc-platform = { workspace = true }
 mock-platform = { workspace = true }
+kc-ids = { workspace = true }
+kc-obs = { workspace = true }
+kc-events = { workspace = true }
+kc-store = { workspace = true }
+kc-graph = { workspace = true }
 
 [dependency-groups]
 dev = [
     "kc-labels",
     "kc-platform",
     "mock-platform",
+    "kc-ids",
+    "kc-obs",
+    "kc-events",
+    "kc-store",
+    "kc-graph",
     "pytest>=8",
     "hypothesis>=6",
     "ruff>=0.6",
@@ -58,4 +68,4 @@ venvPath = "."
 venv = ".venv"
 
 [tool.ruff.lint.isort]
-known-first-party = ["kc_labels", "kc_platform", "mock_platform", "tests"]
+known-first-party = ["kc_labels", "kc_platform", "kc_ids", "kc_obs", "kc_events", "kc_store", "kc_graph", "mock_platform", "sync", "ingest_worker", "tests"]

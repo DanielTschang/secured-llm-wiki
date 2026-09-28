@@ -1,0 +1,17 @@
+[project]
+name = "kc-events"
+version = "0.1.0"
+description = "ID-only queue messages"
+requires-python = ">=3.14"
+dependencies = ["kc-labels", "kc-ids", "pydantic>=2.9"]
+
+[tool.uv.sources]
+kc-labels = { workspace = true }
+kc-ids = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kc_events"]
