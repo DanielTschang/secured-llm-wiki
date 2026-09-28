@@ -1,19 +1,92 @@
 [importlinter]
 root_packages =
     kc_labels
+    kc_ids
+    kc_obs
+    kc_events
     kc_platform
+    kc_store
+    kc_graph
     mock_platform
+    sync
+    ingest_worker
+include_external_packages = True
 
 [importlinter:contract:labels-leaf]
 name = kc_labels depends on no other workspace package
 type = forbidden
 source_modules = kc_labels
 forbidden_modules =
+    kc_ids
+    kc_obs
+    kc_events
     kc_platform
+    kc_store
+    kc_graph
     mock_platform
+    sync
+    ingest_worker
 
-[importlinter:contract:services-independent]
+[importlinter:contract:packages-not-services]
 name = packages never import services
 type = forbidden
-source_modules = kc_platform
-forbidden_modules = mock_platform
+source_modules =
+    kc_labels
+    kc_ids
+    kc_obs
+    kc_events
+    kc_platform
+    kc_store
+    kc_graph
+forbidden_modules =
+    mock_platform
+    sync
+    ingest_worker
+
+[importlinter:contract:services-independent]
+name = services never import each other
+type = independence
+modules =
+    mock_platform
+    sync
+    ingest_worker
+
+[importlinter:contract:pipeline-only-spacecontext]
+name = ingest pipeline reaches data only through SpaceContext (ADR-006)
+type = forbidden
+source_modules = ingest_worker.pipeline
+forbidden_modules =
+    pymongo
+    boto3
+    botocore
+    neo4j
+    httpx
+    nats
+    kc_store.mongo
+    kc_store.s3
+    kc_store.vault
+    kc_graph.neo4j
+allow_indirect_imports = True
+
+[importlinter:contract:broker-never-reads-content]
+name = ingest broker (main process) cannot reach space content, even indirectly
+type = forbidden
+source_modules =
+    ingest_worker.broker
+    ingest_worker.main
+forbidden_modules =
+    kc_store.space
+    kc_store.context
+    kc_store.envelope
+    kc_graph
+    ingest_worker.pipeline
+    ingest_worker.task
+
+[importlinter:contract:sync-no-graph]
+name = sync never touches the graph
+type = forbidden
+source_modules = sync
+forbidden_modules =
+    kc_graph
+    neo4j
+allow_indirect_imports = True

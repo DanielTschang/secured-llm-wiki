@@ -4,6 +4,7 @@ requires-python = ">=3.14"
 
 [manifest]
 members = [
+    "ingest-worker",
     "kc-events",
     "kc-graph",
     "kc-ids",
@@ -542,6 +543,31 @@ wheels = [
 ]
 
 [[package]]
+name = "ingest-worker"
+version = "0.1.0"
+source = { editable = "services/ingest-worker" }
+dependencies = [
+    { name = "kc-events" },
+    { name = "kc-graph" },
+    { name = "kc-ids" },
+    { name = "kc-labels" },
+    { name = "kc-obs" },
+    { name = "kc-store" },
+    { name = "nats-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "kc-events", editable = "packages/kc-events" },
+    { name = "kc-graph", editable = "packages/kc-graph" },
+    { name = "kc-ids", editable = "packages/kc-ids" },
+    { name = "kc-labels", editable = "packages/kc-labels" },
+    { name = "kc-obs", editable = "packages/kc-obs" },
+    { name = "kc-store", editable = "packages/kc-store" },
+    { name = "nats-py", specifier = ">=2.9" },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -672,6 +698,7 @@ dev = [
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "import-linter" },
+    { name = "ingest-worker" },
     { name = "kc-events" },
     { name = "kc-graph" },
     { name = "kc-ids" },
@@ -699,6 +726,7 @@ dev = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "import-linter", specifier = ">=2" },
+    { name = "ingest-worker", editable = "services/ingest-worker" },
     { name = "kc-events", editable = "packages/kc-events" },
     { name = "kc-graph", editable = "packages/kc-graph" },
     { name = "kc-ids", editable = "packages/kc-ids" },

@@ -20,6 +20,7 @@ kc-events = { workspace = true }
 kc-store = { workspace = true }
 kc-graph = { workspace = true }
 sync = { workspace = true }
+ingest-worker = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -32,6 +33,7 @@ dev = [
     "kc-store",
     "kc-graph",
     "sync",
+    "ingest-worker",
     "pytest>=8",
     "hypothesis>=6",
     "ruff>=0.6",
