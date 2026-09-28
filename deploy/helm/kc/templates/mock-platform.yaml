@@ -13,10 +13,10 @@ spec:
       labels: { app.kubernetes.io/name: mock-platform }
     spec:
       automountServiceAccountToken: false
-      {{- include "kc.podSecurity" . | nindent 6 }}
+      {{- include "kc.podSecurity" (dict) | nindent 6 }}
       containers:
         - name: mock-platform
-          image: {{ .Values.mockPlatform.image }}
+          image: {{ .Values.images.mockPlatform }}
           imagePullPolicy: IfNotPresent
           env:
             # /dev/* (token issuing, fault and ACL controls) stays off in the cluster.

@@ -1,0 +1,77 @@
+{{- /* One Neo4j Community instance per space (ADR-009): graph statistics never mix spaces. */}}
+{{- range .Values.spaces }}
+{{- $name := printf "kc-neo4j-%s" (include "kc.dns" .id) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { kc.io/component: neo4j, kc.io/space: {{ .id }} }
+  template:
+    metadata:
+      labels: { kc.io/component: neo4j, kc.io/space: {{ .id }} }
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" (dict "uid" 7474) | nindent 6 }}
+      containers:
+        - name: neo4j
+          image: {{ $.Values.images.neo4j }}
+          env:
+            # Initial password only; dev_bootstrap.py rotates it and keeps the new one in Vault.
+            - { name: NEO4J_AUTH, value: "neo4j/{{ $.Values.dev.neo4jInitialPassword }}" }
+            - { name: NEO4J_server_memory_heap_initial__size, value: 128m }
+            - { name: NEO4J_server_memory_heap_max__size, value: 256m }
+            - { name: NEO4J_server_memory_pagecache_size, value: 64m }
+            - { name: NEO4J_dbms_usage__report_enabled, value: "false" }
+            - { name: NEO4J_server_http_enabled, value: "false" }
+          ports:
+            - { name: bolt, containerPort: 7687 }
+          readinessProbe:
+            tcpSocket: { port: bolt }
+            initialDelaySeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            # The image entrypoint writes its generated config under /var/lib/neo4j.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: logs, mountPath: /logs }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: {{ $name }} }
+        - { name: logs, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  selector: { kc.io/component: neo4j, kc.io/space: {{ .id }} }
+  ports:
+    - { name: bolt, port: 7687, targetPort: bolt }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: neo4j, kc.io/space: {{ .id }} }
+  ingress:
+    {{- include "kc.ingressFrom" (dict "from" (list "ingest-worker" "test-runner") "port" 7687) | nindent 4 }}
+{{- end }}

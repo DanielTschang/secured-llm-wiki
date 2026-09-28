@@ -1,11 +1,39 @@
-# One entry per platform space. Per-space resources (storage, Vault roles, ...) are
-# generated from this list; M0 only renders the space registry.
+# One entry per platform space. Per-space resources are generated from this list.
 spaces:
   - id: sp_common
   - id: sp_opc
   - id: sp_cd
 
+# Phase 1 (infra) is always on. Phase 2 (NATS and applications) is enabled after
+# scripts/dev_bootstrap.py has written deploy/.generated/values.yaml.
+apps:
+  enabled: false
+
+images:
+  mockPlatform: kc/mock-platform:dev
+  vault: hashicorp/vault:1.20
+  minio: kc/minio:RELEASE.2025-10-15T17-29-55Z
+  mongo: mongo:8.0
+  neo4j: neo4j:5.26-community
+  nats: nats:2.11-alpine
+
 mockPlatform:
   enabled: true
-  image: kc/mock-platform:dev
   port: 8080
+  # SHA-256 of the svc_sync client secret; the secret itself lives only in Vault.
+  svcSyncSecretSha256: ""
+
+# Development-only bootstrap credentials. Mongo root and Neo4j passwords are rotated by
+# dev_bootstrap.py right after startup and the new values live only in Vault.
+dev:
+  vaultRootToken: root
+  minioRootUser: kc-minio-root
+  minioRootPassword: kc-dev-minio-root
+  mongoInitialRootPassword: kc-dev-initial
+  neo4jInitialPassword: kc-dev-initial
+
+# bcrypt hashes of NATS user passwords (plaintexts live only in Vault). Set by bootstrap.
+nats:
+  syncPasswordBcrypt: ""
+  ingestPasswordBcrypt: ""
+  adminPasswordBcrypt: ""

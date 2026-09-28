@@ -1,0 +1,79 @@
+# Vault in dev mode stands in for the out-of-cluster KMS (ADR-009). In-memory: a restart
+# loses all keys, so encrypted dev data must be re-synced (`make kind-reset`).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kc-vault
+---
+# Vault reviews ServiceAccount tokens for the kubernetes auth method.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kc-vault-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: kc-vault
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kc-vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { kc.io/component: vault }
+  template:
+    metadata:
+      labels: { kc.io/component: vault }
+    spec:
+      serviceAccountName: kc-vault
+      {{- include "kc.podSecurity" (dict "uid" 100) | nindent 6 }}
+      containers:
+        - name: vault
+          image: {{ .Values.images.vault }}
+          command: ["vault", "server", "-dev", "-dev-listen-address=0.0.0.0:8200",
+                    "-dev-root-token-id={{ .Values.dev.vaultRootToken }}"]
+          env:
+            - { name: HOME, value: /tmp }
+            - { name: SKIP_SETCAP, value: "true" }
+          ports:
+            - { name: http, containerPort: 8200 }
+          readinessProbe:
+            httpGet: { path: /v1/sys/health, port: http }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kc-vault
+spec:
+  selector: { kc.io/component: vault }
+  ports:
+    - { name: http, port: 8200, targetPort: http }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-vault
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: vault }
+  ingress:
+    {{- include "kc.ingressFrom" (dict "from" (list "sync" "ingest-worker" "test-runner") "port" 8200) | nindent 4 }}
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{ port: "6443", protocol: TCP }]
+    - toEndpoints:
+        - matchLabels: { kc.io/component: mongodb }
+      toPorts:
+        - ports: [{ port: "27017", protocol: TCP }]

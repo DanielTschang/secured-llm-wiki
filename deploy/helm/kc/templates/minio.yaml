@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kc-minio
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kc-minio
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { kc.io/component: minio }
+  template:
+    metadata:
+      labels: { kc.io/component: minio }
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" (dict) | nindent 6 }}
+      containers:
+        - name: minio
+          image: {{ .Values.images.minio }}
+          args: ["server", "/data", "--address", ":9000"]
+          env:
+            - { name: MINIO_ROOT_USER, value: {{ .Values.dev.minioRootUser | quote }} }
+            - { name: MINIO_ROOT_PASSWORD, value: {{ .Values.dev.minioRootPassword | quote }} }
+            - { name: MINIO_BROWSER, value: "off" }
+            - { name: MINIO_UPDATE, value: "off" }
+            - { name: HOME, value: /tmp }
+          ports:
+            - { name: s3, containerPort: 9000 }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: s3 }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: kc-minio }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kc-minio
+spec:
+  selector: { kc.io/component: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: s3 }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-minio
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: minio }
+  ingress:
+    {{- include "kc.ingressFrom" (dict "from" (list "sync" "ingest-worker" "test-runner") "port" 9000) | nindent 4 }}

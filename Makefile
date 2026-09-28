@@ -20,7 +20,7 @@ GUARD        := scripts/require-local-context.sh
 KUBECTL      := kubectl --context $(KUBE_CONTEXT)
 HELM         := helm --kube-context $(KUBE_CONTEXT)
 
-.PHONY: test leak leak-infra eval lint kind-up kind-down deploy image
+.PHONY: test leak leak-infra eval lint kind-up kind-down deploy images
 
 test:
 	uv run pytest packages services
@@ -51,17 +51,31 @@ kind-up:
 	  --set operator.replicas=1 --wait --timeout 10m
 	$(MAKE) deploy
 
-image:
-	docker build -f services/mock-platform/Dockerfile -t $(MOCK_IMAGE) .
+MINIO_TAG    ?= RELEASE.2025-10-15T17-29-55Z
+MINIO_IMAGE  := kc/minio:$(MINIO_TAG)
+GENERATED    := deploy/.generated/values.yaml
+HELM_KC       = $(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --wait --timeout 10m
 
-deploy: image
+images:
+	docker build -f services/mock-platform/Dockerfile -t $(MOCK_IMAGE) .
+	docker image inspect $(MINIO_IMAGE) >/dev/null 2>&1 || \
+	  docker build --build-arg MINIO_TAG=$(MINIO_TAG) -t $(MINIO_IMAGE) deploy/images/minio
+
+# Phase 1: infra (Vault, MinIO, MongoDB, Neo4j). Bootstrap writes secrets to Vault and
+# hashes to $(GENERATED). Phase 2: NATS and applications. Then the NATS stream.
+deploy: images
 	$(GUARD) $(KUBE_CONTEXT)
-	kind load docker-image $(MOCK_IMAGE) --name $(CLUSTER)
+	kind load docker-image $(MOCK_IMAGE) $(MINIO_IMAGE) --name $(CLUSTER)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(KUBECTL) label namespace $(NAMESPACE) --overwrite \
 	  pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=latest
-	$(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --create-namespace --wait --timeout 5m
+	$(HELM_KC) $(if $(wildcard $(GENERATED)),-f $(GENERATED))
+	uv run python scripts/dev_bootstrap.py infra --context $(KUBE_CONTEXT)
+	$(HELM_KC) -f $(GENERATED)
+	uv run python scripts/dev_bootstrap.py post --context $(KUBE_CONTEXT)
 
+# Vault runs in dev mode (in memory): if it restarts, keys are gone. Recreate the cluster.
 kind-down:
 	$(GUARD) $(KUBE_CONTEXT) --allow-missing
 	kind delete cluster --name $(CLUSTER)
+	rm -f $(GENERATED)

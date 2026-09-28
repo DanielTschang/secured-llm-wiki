@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kc-mongodb
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kc-mongodb
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { kc.io/component: mongodb }
+  template:
+    metadata:
+      labels: { kc.io/component: mongodb }
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" (dict "uid" 999) | nindent 6 }}
+      containers:
+        - name: mongodb
+          image: {{ .Values.images.mongo }}
+          args: ["--auth", "--bind_ip_all"]
+          env:
+            # Initial root only; dev_bootstrap.py hands it to Vault, which rotates it.
+            - { name: MONGO_INITDB_ROOT_USERNAME, value: kc-root }
+            - { name: MONGO_INITDB_ROOT_PASSWORD, value: {{ .Values.dev.mongoInitialRootPassword | quote }} }
+          ports:
+            - { name: mongo, containerPort: 27017 }
+          readinessProbe:
+            tcpSocket: { port: mongo }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: config, mountPath: /data/configdb }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: kc-mongodb }
+        - { name: config, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kc-mongodb
+spec:
+  selector: { kc.io/component: mongodb }
+  ports:
+    - { name: mongo, port: 27017, targetPort: mongo }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-mongodb
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: mongodb }
+  ingress:
+    {{- include "kc.ingressFrom" (dict "from" (list "sync" "ingest-worker" "test-runner" "vault") "port" 27017) | nindent 4 }}
