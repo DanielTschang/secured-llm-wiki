@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,7 @@ def cluster() -> str:
 
 
 @pytest.fixture(scope="module")
-def control_ns(cluster: str) -> str:
+def control_ns(cluster: str) -> Iterator[str]:
     """A namespace with no NetworkPolicies: the positive control."""
     manifest = {
         "apiVersion": "v1",
@@ -63,7 +64,8 @@ def control_ns(cluster: str) -> str:
         },
     }
     kubectl(cluster, "apply", "-f", "-", stdin=json.dumps(manifest))
-    return CONTROL_NAMESPACE
+    yield CONTROL_NAMESPACE
+    kubectl(cluster, "delete", "namespace", CONTROL_NAMESPACE, "--wait=false", check=False)
 
 
 def probe(ctx: str, namespace: str, script: str, labels: dict[str, str] | None = None) -> str:
@@ -113,9 +115,8 @@ def node_ip(ctx: str) -> str:
     ).strip()  # fmt: skip
 
 
-def egress_script(node: str) -> str:
-    """Prints `<check> OPEN|BLOCKED` for each egress path, at the connection level."""
-    checks = {
+def egress_checks(node: str) -> dict[str, str]:
+    return {
         "dns_internal": "nslookup kubernetes.default.svc.cluster.local",
         "dns_external": "nslookup example.com",
         "tcp_internet": "nc -w 5 1.1.1.1 443 </dev/null",
@@ -123,6 +124,11 @@ def egress_script(node: str) -> str:
         "tcp_other_namespace": "nc -w 5 kube-dns.kube-system.svc.cluster.local 9153 </dev/null",
         "tcp_kubelet": f"nc -w 5 {node} 10250 </dev/null",
     }
+
+
+def egress_script(node: str) -> str:
+    """Prints `<check> OPEN|BLOCKED` for each egress path, at the connection level."""
+    checks = egress_checks(node)
     lines = ["echo PROBE_RAN"]
     for name, cmd in checks.items():
         lines.append(
@@ -131,14 +137,17 @@ def egress_script(node: str) -> str:
     return "; ".join(lines)
 
 
-def parse(out: str) -> dict[str, str]:
+def parse(out: str, node: str) -> dict[str, str]:
     assert "PROBE_RAN" in out, out
-    return dict(re.findall(r"^(\w+) (OPEN|BLOCKED)$", out, flags=re.M))
+    results = dict(re.findall(r"^(\w+) (OPEN|BLOCKED)$", out, flags=re.M))
+    assert set(results) == set(egress_checks(node)), out  # no check may go missing
+    return results
 
 
 @pytest.fixture(scope="module")
 def control_results(cluster: str, control_ns: str) -> dict[str, str]:
-    return parse(probe(cluster, control_ns, egress_script(node_ip(cluster))))
+    node = node_ip(cluster)
+    return parse(probe(cluster, control_ns, egress_script(node)), node)
 
 
 @pytest.mark.parametrize(
@@ -149,14 +158,18 @@ def control_results(cluster: str, control_ns: str) -> dict[str, str]:
 def test_no_egress_beyond_cluster_dns(
     cluster: str, control_results: dict[str, str], labels: dict[str, str] | None
 ) -> None:
-    results = parse(probe(cluster, NAMESPACE, egress_script(node_ip(cluster)), labels))
+    node = node_ip(cluster)
+    results = parse(probe(cluster, NAMESPACE, egress_script(node), labels), node)
     assert results["dns_internal"] == "OPEN", results  # pod networking and cluster DNS work
+    unverifiable: list[str] = []
     for check, state in results.items():
         if check == "dns_internal":
             continue
-        if control_results.get(check) != "OPEN":
-            _unavailable(f"positive control for {check} did not connect; cannot verify block")
         assert state == "BLOCKED", f"{check} reachable from {NAMESPACE}: {results}"
+        if control_results[check] != "OPEN":
+            unverifiable.append(check)
+    if unverifiable:
+        _unavailable(f"positive control did not connect for {unverifiable}; block unverified")
 
 
 # --- mock-platform L7 policy -------------------------------------------------
@@ -170,14 +183,16 @@ req() {
 """
 
 
-def http(cluster: str, client: str | None, method: str, path: str) -> str:
+def http(
+    cluster: str, client: str | None, method: str, path: str, namespace: str = NAMESPACE
+) -> str:
     """The HTTP status seen by the probe, or 'none' when the connection was dropped."""
-    args = f"http://mock-platform{path}"
+    args = f"http://mock-platform.{NAMESPACE}.svc.cluster.local{path}"
     if method == "POST":
         body = '{"user_id":"svc_sync"}'
         args = f"--post-data='{body}' --header='Content-Type: application/json' {args}"
     labels = {"kc.io/platform-client": client} if client else None
-    out = probe(cluster, NAMESPACE, HTTP_SCRIPT + f"req {args}", labels)
+    out = probe(cluster, namespace, HTTP_SCRIPT + f"req {args}", labels)
     assert "PROBE_RAN" in out, out
     m = re.search(r"RESULT rc=(\d+) code=(\w+)", out)
     assert m, out
@@ -196,6 +211,9 @@ def http(cluster: str, client: str | None, method: str, path: str) -> str:
         ("acl", "GET", "/api/spaces/sp_opc/pages", "403"),
         ("pages", "GET", "/api/pages/opc_o1", "404"),
         ("pages", "GET", "/api/me/spaces", "403"),
+        ("pages", "GET", "/api/spaces/sp_opc/pages", "404"),
+        ("pages", "GET", "/api/pages/opc_o1/attachments/o1_residual.png", "404"),
+        ("acl", "GET", "/api/me/spaces?x=1", "403"),
         ("acl", "POST", "/dev/token", "403"),
         ("pages", "POST", "/dev/token", "403"),
     ],
@@ -204,6 +222,15 @@ def test_mock_platform_l7_allow_list(
     cluster: str, client: str | None, method: str, path: str, expect: str
 ) -> None:
     assert http(cluster, client, method, path) == expect
+
+
+@pytest.mark.parametrize("client", [None, "acl"], ids=["plain", "acl-label"])
+def test_mock_platform_ingress_rejects_other_namespaces(
+    cluster: str, control_ns: str, client: str | None
+) -> None:
+    """From a namespace with no egress limits, only mock-platform's own ingress policy can
+    block; a copied client label from another namespace must not help."""
+    assert http(cluster, client, "GET", "/.well-known/jwks.json", namespace=control_ns) == "none"
 
 
 def test_dev_endpoints_disabled_in_cluster(cluster: str) -> None:

@@ -1,7 +1,15 @@
 # All cluster commands pass --kube-context/--context explicitly and go through the guard.
 # The ambient current-context is never used.
 CLUSTER      ?= kc
-ifeq ($(shell printf '%s' '$(CLUSTER)' | grep -Ex '[a-z0-9-]+'),)
+# Validate the raw, unexpanded value with make functions only: no shell, no eval, so a
+# crafted CLUSTER can neither run commands nor smuggle extra kubectl/helm flags.
+_CLUSTER_RAW := $(value CLUSTER)
+_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 -
+_strip = $(if $1,$(call _strip,$(wordlist 2,$(words $1),$1),$(subst $(firstword $1),,$2)),$2)
+ifneq ($(words $(_CLUSTER_RAW)),1)
+$(error CLUSTER must match [a-z0-9-]+)
+endif
+ifneq ($(call _strip,$(_ALLOWED),$(_CLUSTER_RAW)),)
 $(error CLUSTER must match [a-z0-9-]+)
 endif
 KUBE_CONTEXT := kind-$(CLUSTER)
