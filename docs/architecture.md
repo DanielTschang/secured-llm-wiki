@@ -217,4 +217,7 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 - **ingest 的 space 隔離為程式與行程層級**（ADR-006）：防程式 bug，不防 ingest-worker 主行程被入侵。
 - **LanceDB 的 per-space 加密**：待調查 Lance／object_store 是否支援 SSE-C；若不支援，LanceDB 僅有 bucket 權限隔離與 SSE。
 - **Neo4j Community 每 space 一個 instance**：正式環境是否改用 Enterprise 多資料庫視授權與 space 數量決定。
-- **MinIO 社群版**已進入維護模式，正式環境 object store 待定。
+- **MinIO 社群版**已進入維護模式，正式環境 object store 待定。社群版已不再發佈 image，開發環境改由 `deploy/images/minio/` 從固定的 release tag 原始碼建置。
+- **MinIO 的 per-space 憑證是長效靜態金鑰**（M1）：每個 space 一個只能存取自己 bucket 的 MinIO user，金鑰放在 Vault KV 該 space 的路徑下；不像 MongoDB 動態憑證會自動過期。改用短效憑證（例如 STS）需視正式環境的 object store 而定。
+- **開發環境的 Vault 為 dev mode**：資料在記憶體中，Vault 重啟即遺失所有 transit 金鑰，已加密的開發資料無法再解密，需 `make kind-down && make kind-up` 重建。正式環境改用叢集外 KMS。
+- **開發環境的基礎元件初始密碼出現在 Helm values**：MongoDB root 與 Neo4j 密碼在 bootstrap 後立即輪替、新值只存在 Vault；MinIO root 未輪替。Helm release（k8s Secret）會保存這些 dev 初始值與 NATS／client secret 的雜湊，不含任何 space 金鑰。
