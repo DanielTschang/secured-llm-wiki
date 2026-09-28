@@ -40,6 +40,8 @@ dev = [
     "bcrypt>=4.2",
     "nats-py>=2.9",
     "pyyaml>=6",
+    "boto3-stubs[s3]>=1.35",
+    "types-pyyaml>=6",
 ]
 
 [tool.pytest.ini_options]
@@ -47,6 +49,7 @@ addopts = "--import-mode=importlib -p no:cacheprovider"
 markers = [
     "leak: application-layer leak tests (zero tolerance)",
     "infra: infrastructure leak tests; require the local kind cluster",
+    "integration: adapters against real services in the local kind cluster",
 ]
 testpaths = ["packages", "services", "tests/leak"]
 

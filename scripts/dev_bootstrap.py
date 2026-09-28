@@ -16,11 +16,7 @@ import contextlib
 import hashlib
 import json
 import secrets
-import socket
-import subprocess
 import sys
-import time
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +29,11 @@ from minio.minioadmin import MinioAdmin
 from neo4j import GraphDatabase
 from neo4j.exceptions import AuthError
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from tests.support.cluster import local_cluster_ok
+from tests.support.cluster import port_forward as _port_forward
+
 REPO = Path(__file__).parents[1]
-GUARD = REPO / "scripts/require-local-context.sh"
 VALUES = REPO / "deploy/helm/kc/values.yaml"
 GENERATED = REPO / "deploy/.generated/values.yaml"
 NAMESPACE = "kc"
@@ -54,35 +53,12 @@ def log(msg: str) -> None:
 
 
 def guard(ctx: str) -> None:
-    if subprocess.run([str(GUARD), ctx], check=False).returncode != 0:
+    if not local_cluster_ok(ctx):
         sys.exit("refusing to bootstrap a non-local cluster")
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@contextlib.contextmanager
-def port_forward(ctx: str, service: str, remote: int) -> Iterator[int]:
-    local = free_port()
-    proc = subprocess.Popen(
-        ["kubectl", "--context", ctx, "-n", NAMESPACE, "port-forward",
-         f"svc/{service}", f"{local}:{remote}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )  # fmt: skip
-    try:
-        for _ in range(100):
-            with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", local), 0.2):
-                break
-            time.sleep(0.2)
-        else:
-            raise RuntimeError(f"port-forward to {service} did not come up")
-        yield local
-    finally:
-        proc.terminate()
-        proc.wait()
+def port_forward(ctx: str, service: str, remote: int) -> contextlib.AbstractContextManager[int]:
+    return _port_forward(service, remote, ctx)
 
 
 def spaces() -> list[str]:

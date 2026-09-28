@@ -20,7 +20,7 @@ GUARD        := scripts/require-local-context.sh
 KUBECTL      := kubectl --context $(KUBE_CONTEXT)
 HELM         := helm --kube-context $(KUBE_CONTEXT)
 
-.PHONY: test leak leak-infra eval lint kind-up kind-down deploy images
+.PHONY: test integration leak leak-infra eval lint kind-up kind-down deploy images
 
 test:
 	uv run pytest packages services
@@ -30,6 +30,9 @@ leak:
 
 leak-infra: ; $(GUARD) $(KUBE_CONTEXT)
 	KC_REQUIRE_INFRA=1 KC_KUBE_CONTEXT=$(KUBE_CONTEXT) uv run pytest tests/leak/infra -m infra -rs
+
+integration:
+	uv run pytest tests/integration -m integration -rs
 
 eval:
 	@echo "no eval yet: quality evaluation starts at M2 (gold/slides.json)"
