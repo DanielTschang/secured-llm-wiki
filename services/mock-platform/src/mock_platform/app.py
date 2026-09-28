@@ -44,6 +44,10 @@ class AclRequest(BaseModel):
     spaces: list[str]
 
 
+def _unregistered(_path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    return lambda f: f
+
+
 def _unauthorized() -> JSONResponse:
     return JSONResponse(
         {"detail": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"}
@@ -55,7 +59,8 @@ def _not_found() -> JSONResponse:
     return JSONResponse({"detail": "not found"}, status_code=404)
 
 
-def create_app(manifest_path: Path) -> FastAPI:
+def create_app(manifest_path: Path, *, dev_endpoints: bool = False) -> FastAPI:
+    """dev_endpoints registers /dev/* (token issuing, fault and ACL controls) for tests."""
     manifest: dict[str, Any] = json.loads(manifest_path.read_text())
     root = manifest_path.parent
     users: dict[str, set[str]] = {u: set(s) for u, s in manifest["users"].items()}
@@ -112,7 +117,9 @@ def create_app(manifest_path: Path) -> FastAPI:
     def jwks() -> dict[str, Any]:
         return {"keys": [public_jwk]}
 
-    @app.post("/dev/token")
+    dev = app.post if dev_endpoints else _unregistered
+
+    @dev("/dev/token")
     def issue_token(req: TokenRequest) -> Response:
         if req.user_id not in users and req.user_id not in SERVICE_ACCOUNTS:
             return _not_found()
@@ -131,12 +138,12 @@ def create_app(manifest_path: Path) -> FastAPI:
         )
         return JSONResponse({"access_token": token, "token_type": "Bearer"})
 
-    @app.post("/dev/fault")
+    @dev("/dev/fault")
     def fault(req: FaultRequest) -> dict[str, bool]:
         state["down"] = req.down
         return {"down": req.down}
 
-    @app.post("/dev/acl")
+    @dev("/dev/acl")
     def set_acl(req: AclRequest) -> Response:
         if req.user_id not in users:
             return _not_found()
@@ -209,4 +216,7 @@ def create_app(manifest_path: Path) -> FastAPI:
 
 def create_app_from_env() -> FastAPI:
     logging.basicConfig(level=logging.INFO)
-    return create_app(Path(os.environ["KC_MOCK_MANIFEST"]))
+    return create_app(
+        Path(os.environ["KC_MOCK_MANIFEST"]),
+        dev_endpoints=os.environ.get("KC_MOCK_DEV_ENDPOINTS") == "1",
+    )

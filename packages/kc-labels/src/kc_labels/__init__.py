@@ -31,6 +31,15 @@ def _space_set(raw: Iterable[str]) -> frozenset[SpaceId]:
     return frozenset(SpaceId(s) for s in raw)
 
 
+def _check_spaces(spaces: frozenset[SpaceId]) -> None:
+    # Exactly frozenset: a mutable set could be changed after the labels were computed.
+    if type(spaces) is not frozenset:
+        raise TypeError("spaces must be a frozenset")
+    for s in spaces:
+        if not isinstance(s, SpaceId):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise TypeError("spaces must contain SpaceId values")
+
+
 @dataclass(frozen=True, slots=True)
 class Labels:
     """Non-empty set of source space IDs. Empty labels would be readable by anyone, so they
@@ -39,11 +48,9 @@ class Labels:
     spaces: frozenset[SpaceId]
 
     def __post_init__(self) -> None:
+        _check_spaces(self.spaces)
         if not self.spaces:
             raise ValueError("labels must not be empty")
-        for s in self.spaces:
-            if not isinstance(s, SpaceId):  # pyright: ignore[reportUnnecessaryIsInstance]
-                raise TypeError("labels must contain SpaceId values")
 
     @classmethod
     def of(cls, spaces: Iterable[str]) -> Labels:
@@ -55,6 +62,9 @@ class ReadableSpaces:
     """The spaces the platform reports a user can read, as of one lookup. May be empty."""
 
     spaces: frozenset[SpaceId]
+
+    def __post_init__(self) -> None:
+        _check_spaces(self.spaces)
 
     @classmethod
     def of(cls, spaces: Iterable[str]) -> ReadableSpaces:

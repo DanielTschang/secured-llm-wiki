@@ -1,7 +1,6 @@
 """Identity comes only from a verified token (invariant 6)."""
 
-from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import jwt
 
@@ -17,17 +16,43 @@ class InvalidToken(Exception):
         super().__init__("invalid token")
 
 
-@dataclass(frozen=True, slots=True)
 class Principal:
-    """An authenticated user. Only verify_token can create one."""
+    """An authenticated user. Only verify_token can create one; it cannot be copied,
+    replaced, or mutated into another user."""
 
-    user_id: str
-    bearer_token: str = field(repr=False)
-    _guard: object = field(repr=False, compare=False)
+    __slots__ = ("_token", "_user_id")
 
-    def __post_init__(self) -> None:
-        if self._guard is not _CONSTRUCT:
+    def __init__(self, user_id: str, bearer_token: str, guard: object) -> None:
+        if guard is not _CONSTRUCT:
             raise TypeError("Principal is created only by verify_token")
+        object.__setattr__(self, "_user_id", user_id)
+        object.__setattr__(self, "_token", bearer_token)
+
+    @property
+    def user_id(self) -> str:
+        return self._user_id
+
+    @property
+    def bearer_token(self) -> str:
+        return self._token
+
+    def __setattr__(self, name: str, value: object) -> NoReturn:
+        raise AttributeError("Principal is immutable")
+
+    def __delattr__(self, name: str) -> NoReturn:
+        raise AttributeError("Principal is immutable")
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("Principal cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> NoReturn:
+        raise TypeError("Principal cannot be copied")
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        raise TypeError("Principal cannot be serialized")
+
+    def __repr__(self) -> str:
+        return f"Principal(user_id={self._user_id!r})"
 
 
 def verify_token(token: str, jwks: dict[str, Any], *, issuer: str, audience: str) -> Principal:

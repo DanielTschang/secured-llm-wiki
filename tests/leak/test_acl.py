@@ -94,6 +94,22 @@ def test_user_token_cannot_list_pages_and_looks_like_missing_space(
     )
 
 
+def test_user_cannot_distinguish_existing_from_missing_space(
+    platform: TestClient, token_for: Callable[[str], str]
+) -> None:
+    """Attacker view: u_cd probes sp_opc (exists, not readable) vs a space that does not exist."""
+    h = {"Authorization": f"Bearer {token_for('u_cd')}"}
+    for existing, missing in [
+        ("/api/spaces/sp_opc/pages", "/api/spaces/sp_nope/pages"),
+        ("/api/spaces/sp_cd/pages", "/api/spaces/sp_nope/pages"),
+        ("/api/pages/opc_o1", "/api/pages/no_such_page"),
+        ("/api/pages/opc_o1/attachments/o1_residual.png", "/api/pages/nope/attachments/x.png"),
+    ]:
+        assert_indistinguishable(
+            platform.get(existing, headers=h), platform.get(missing, headers=h)
+        )
+
+
 def test_get_pages_exposes_no_version(
     platform: TestClient, token_for: Callable[[str], str]
 ) -> None:
@@ -107,6 +123,8 @@ def test_get_pages_exposes_no_version(
 def test_platform_down_fails_closed(platform: TestClient, token_for: Callable[[str], str]) -> None:
     authz = Authorizer(HttpPlatformAcl(platform))
     p = login(platform, token_for, "u_opc_cd")
+    assert authz.readable_spaces(p).spaces  # positive control: works before the fault
+    authz.invalidate(p.user_id)
     platform.post("/dev/fault", json={"down": True})
     assert not authz.can_read(p, Labels.of(["sp_common"]))
 

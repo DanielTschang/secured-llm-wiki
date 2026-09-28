@@ -11,7 +11,7 @@ TESTSET = Path(__file__).parents[3] / "tests/fixtures/synthetic_litho_testset"
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app(TESTSET / "manifest.json"))
+    return TestClient(create_app(TESTSET / "manifest.json", dev_endpoints=True))
 
 
 def token(client: TestClient, subject: str) -> str:
@@ -93,3 +93,20 @@ def test_page_content_and_attachment(client: TestClient) -> None:
 def test_attachment_outside_page_refused(client: TestClient, path: str) -> None:
     resp = client.get(path, headers=auth(token(client, "svc_sync")))
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/dev/token", "/dev/fault", "/dev/acl"])
+def test_dev_endpoints_off_by_default(path: str) -> None:
+    c = TestClient(create_app(TESTSET / "manifest.json"))
+    resp = c.post(path, json={"user_id": "svc_sync", "down": True, "spaces": []})
+    assert resp.status_code == 404
+    assert resp.content == c.post("/no/such/route").content
+
+
+def test_env_factory_keeps_dev_endpoints_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mock_platform.app import create_app_from_env
+
+    monkeypatch.setenv("KC_MOCK_MANIFEST", str(TESTSET / "manifest.json"))
+    monkeypatch.delenv("KC_MOCK_DEV_ENDPOINTS", raising=False)
+    c = TestClient(create_app_from_env())
+    assert c.post("/dev/token", json={"user_id": "svc_sync"}).status_code == 404

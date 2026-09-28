@@ -18,6 +18,9 @@ spec:
         - name: mock-platform
           image: {{ .Values.mockPlatform.image }}
           imagePullPolicy: IfNotPresent
+          env:
+            # /dev/* (token issuing, fault and ACL controls) stays off in the cluster.
+            - { name: KC_MOCK_DEV_ENDPOINTS, value: "0" }
           ports:
             - { name: http, containerPort: {{ .Values.mockPlatform.port }} }
           readinessProbe:
@@ -38,34 +41,48 @@ spec:
   ports:
     - { name: http, port: 80, targetPort: http }
 ---
-# Only pods explicitly labelled as platform clients may reach the mock platform.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+# L7 allow-list per client role. ACL clients (query) may only ask for readable spaces;
+# pages clients (sync) may only read page metadata, content and attachments.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
 metadata:
   name: mock-platform-ingress
 spec:
-  podSelector:
+  endpointSelector:
     matchLabels: { app.kubernetes.io/name: mock-platform }
-  policyTypes: [Ingress]
   ingress:
-    - from:
-        - podSelector:
-            matchLabels: { kc.io/platform-client: "true" }
-      ports:
-        - { protocol: TCP, port: {{ .Values.mockPlatform.port }} }
+    - fromEndpoints:
+        - matchLabels: { kc.io/platform-client: acl }
+      toPorts:
+        - ports: [{ port: "{{ .Values.mockPlatform.port }}", protocol: TCP }]
+          rules:
+            http:
+              - { method: GET, path: "/api/me/spaces" }
+              - { method: GET, path: "/\\.well-known/jwks\\.json" }
+    - fromEndpoints:
+        - matchLabels: { kc.io/platform-client: pages }
+      toPorts:
+        - ports: [{ port: "{{ .Values.mockPlatform.port }}", protocol: TCP }]
+          rules:
+            http:
+              - { method: GET, path: "/api/spaces/sp_[a-z0-9_]+/pages" }
+              - { method: GET, path: "/api/pages/[A-Za-z0-9_]+" }
+              - { method: GET, path: "/api/pages/[A-Za-z0-9_]+/attachments/[A-Za-z0-9_.-]+" }
+              - { method: GET, path: "/\\.well-known/jwks\\.json" }
 ---
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
 metadata:
   name: platform-client-egress
 spec:
-  podSelector:
-    matchLabels: { kc.io/platform-client: "true" }
-  policyTypes: [Egress]
+  endpointSelector:
+    matchExpressions:
+      - key: kc.io/platform-client
+        operator: In
+        values: [acl, pages]
   egress:
-    - to:
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: mock-platform }
-      ports:
-        - { protocol: TCP, port: {{ .Values.mockPlatform.port }} }
+    - toEndpoints:
+        - matchLabels: { app.kubernetes.io/name: mock-platform }
+      toPorts:
+        - ports: [{ port: "{{ .Values.mockPlatform.port }}", protocol: TCP }]
 {{- end }}

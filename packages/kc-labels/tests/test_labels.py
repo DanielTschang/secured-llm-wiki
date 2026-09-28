@@ -128,3 +128,23 @@ def test_can_read_rejects_raw_sets() -> None:
         can_read(frozenset({"sp_a"}), Labels.of(["sp_a"]))  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         can_read(ReadableSpaces.of(["sp_a"]), frozenset({"sp_a"}))  # type: ignore[arg-type]
+
+
+def test_labels_reject_mutable_set() -> None:
+    with pytest.raises(TypeError):
+        Labels({SpaceId("sp_cd")})  # type: ignore[arg-type]
+
+
+def test_labels_reject_unvalidated_members() -> None:
+    with pytest.raises(TypeError):
+        Labels(frozenset({"sp_cd"}))  # type: ignore[arg-type]
+
+
+def test_readable_spaces_reject_mutable_set() -> None:
+    with pytest.raises(TypeError):
+        ReadableSpaces({SpaceId("sp_cd")})  # type: ignore[arg-type]
+
+
+def test_readable_spaces_reject_unvalidated_members() -> None:
+    with pytest.raises(TypeError):
+        ReadableSpaces(frozenset({"SP OPC!!"}))  # type: ignore[arg-type]

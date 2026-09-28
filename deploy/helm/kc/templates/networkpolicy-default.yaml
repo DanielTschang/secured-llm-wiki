@@ -1,5 +1,5 @@
 # Default deny for every pod in the namespace, both directions (invariant 7:
-# no pod that handles space content has an outbound path). Only DNS is opened.
+# no pod that handles space content has an outbound path).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -8,21 +8,25 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ---
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+# DNS only for in-cluster names. A plain port-53 allow would let any pod tunnel data
+# out through CoreDNS's upstream forwarding, so queries are filtered by Cilium's DNS
+# proxy. Each `*` matches exactly one label.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
 metadata:
-  name: allow-dns
+  name: allow-cluster-dns
 spec:
-  podSelector: {}
-  policyTypes: [Egress]
+  endpointSelector: {}
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - { protocol: UDP, port: 53 }
-        - { protocol: TCP, port: 53 }
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            dns:
+              {{- range $n := until 6 }}
+              - matchPattern: "{{ repeat (add1 $n | int) "*." }}cluster.local"
+              {{- end }}

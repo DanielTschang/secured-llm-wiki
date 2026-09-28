@@ -49,7 +49,7 @@ def test_principal_repr_hides_token() -> None:
 
 def test_principal_cannot_be_constructed_directly() -> None:
     with pytest.raises(TypeError):
-        Principal("u_opc", "forged")  # type: ignore[call-arg]
+        Principal("u_opc", "forged", object())
 
 
 @pytest.mark.parametrize(
@@ -119,3 +119,18 @@ def test_invalid_token_message_is_generic() -> None:
     with pytest.raises(InvalidToken) as exc:
         verify_token(_token(aud="x"), JWKS, issuer=ISS, audience=AUD)
     assert str(exc.value) == "invalid token"
+
+
+def test_principal_cannot_be_forged_by_replace_or_mutation() -> None:
+    import copy
+    import dataclasses
+
+    p = verify_token(_token(), JWKS, issuer=ISS, audience=AUD)
+    with pytest.raises(TypeError):
+        dataclasses.replace(p, user_id="u_opc_cd")  # type: ignore[type-var]
+    with pytest.raises(AttributeError):
+        p.user_id = "u_opc_cd"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        copy.copy(p)
+    with pytest.raises(TypeError):
+        copy.deepcopy(p)

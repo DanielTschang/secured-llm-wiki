@@ -2,9 +2,14 @@
 
 Require the local kind cluster (`make kind-up`). Skipped when absent unless
 KC_REQUIRE_INFRA=1, in which case absence is a failure.
+
+Every "blocked" assertion has a positive control: the same probe must succeed from a
+namespace without policies. Otherwise an offline machine or a broken probe would pass.
 """
 
+import json
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -17,90 +22,217 @@ REPO = Path(__file__).parents[3]
 GUARD = REPO / "scripts/require-local-context.sh"
 CONTEXT = os.environ.get("KC_KUBE_CONTEXT", "kind-kc")
 NAMESPACE = os.environ.get("KC_NAMESPACE", "kc")
+CONTROL_NAMESPACE = "kc-leak-control"
 PROBE_IMAGE = "busybox:1.36"
+REQUIRE = os.environ.get("KC_REQUIRE_INFRA") == "1"
 
 
-def _guard(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(GUARD), *args], capture_output=True, text=True, check=False)
+def _unavailable(reason: str) -> None:
+    if REQUIRE:
+        pytest.fail(reason)
+    pytest.skip(reason)
 
 
-@pytest.mark.parametrize(
-    "ctx",
-    ["", "danieltschang@mixing", "mixing", "kind", "prod-kind-kc", "kind-kc; rm -rf /", "k3d_x"],
-)
-def test_guard_refuses_non_local_contexts(ctx: str) -> None:
-    assert _guard(ctx, "--allow-missing").returncode != 0
-
-
-def test_guard_accepts_local_name_shape() -> None:
-    assert _guard("kind-kc", "--allow-missing").returncode == 0
+def kubectl(ctx: str, *args: str, stdin: str | None = None, check: bool = True) -> str:
+    result = subprocess.run(
+        ["kubectl", "--context", ctx, *args],
+        input=stdin, capture_output=True, text=True, timeout=300, check=False,
+    )  # fmt: skip
+    if check and result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout + result.stderr
 
 
 @pytest.fixture(scope="module")
 def cluster() -> str:
-    if _guard(CONTEXT).returncode != 0:
-        if os.environ.get("KC_REQUIRE_INFRA") == "1":
-            pytest.fail(f"local cluster {CONTEXT} not available")
-        pytest.skip(f"local cluster {CONTEXT} not available (run make kind-up)")
+    guard = subprocess.run([str(GUARD), CONTEXT], capture_output=True, text=True, check=False)
+    if guard.returncode != 0:
+        _unavailable(f"local cluster {CONTEXT} not available (run make kind-up)")
     return CONTEXT
 
 
-def _probe(ctx: str, script: str, *, platform_client: bool) -> str:
-    """Run a one-shot busybox pod in the kc namespace and return its output."""
+@pytest.fixture(scope="module")
+def control_ns(cluster: str) -> str:
+    """A namespace with no NetworkPolicies: the positive control."""
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+            "name": CONTROL_NAMESPACE,
+            "labels": {"pod-security.kubernetes.io/enforce": "restricted"},
+        },
+    }
+    kubectl(cluster, "apply", "-f", "-", stdin=json.dumps(manifest))
+    return CONTROL_NAMESPACE
+
+
+def probe(ctx: str, namespace: str, script: str, labels: dict[str, str] | None = None) -> str:
+    """Run a one-shot restricted-PSA busybox pod and return its logs."""
     name = f"leak-probe-{uuid.uuid4().hex[:8]}"
-    labels = "kc.io/leak-probe=true"
-    if platform_client:
-        labels += ",kc.io/platform-client=true"
-    result = subprocess.run(
-        [
-            "kubectl", "--context", ctx, "-n", NAMESPACE, "run", name,
-            "--rm", "-i", "--restart=Never", "--quiet",
-            f"--image={PROBE_IMAGE}", f"--labels={labels}",
-            "--pod-running-timeout=2m",
-            "--", "sh", "-c", script,
-        ],
-        capture_output=True, text=True, timeout=240, check=False,
-    )  # fmt: skip
-    return result.stdout + result.stderr
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "labels": {"kc.io/leak-probe": "true", **(labels or {})}},
+        "spec": {
+            "restartPolicy": "Never",
+            "automountServiceAccountToken": False,
+            "securityContext": {
+                "runAsNonRoot": True,
+                "runAsUser": 65532,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
+            "containers": [
+                {
+                    "name": "probe",
+                    "image": PROBE_IMAGE,
+                    "command": ["sh", "-c", script],
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                }
+            ],
+        },
+    }
+    kubectl(ctx, "-n", namespace, "apply", "-f", "-", stdin=json.dumps(pod))
+    try:
+        kubectl(
+            ctx, "-n", namespace, "wait", f"pod/{name}", "--timeout=180s",
+            "--for=jsonpath={.status.phase}=Succeeded",
+        )  # fmt: skip
+        return kubectl(ctx, "-n", namespace, "logs", name)
+    finally:
+        kubectl(ctx, "-n", namespace, "delete", "pod", name, "--wait=false", check=False)
 
 
-# Every probe prints PROBE_RAN first: a pod that never started must not count as "blocked".
-_DNS = (
-    "nslookup kubernetes.default.svc.cluster.local >/dev/null 2>&1 && echo DNS_OK || echo DNS_FAIL"
+def node_ip(ctx: str) -> str:
+    return kubectl(
+        ctx, "get", "nodes", "-o",
+        'jsonpath={.items[0].status.addresses[?(@.type=="InternalIP")].address}',
+    ).strip()  # fmt: skip
+
+
+def egress_script(node: str) -> str:
+    """Prints `<check> OPEN|BLOCKED` for each egress path, at the connection level."""
+    checks = {
+        "dns_internal": "nslookup kubernetes.default.svc.cluster.local",
+        "dns_external": "nslookup example.com",
+        "tcp_internet": "nc -w 5 1.1.1.1 443 </dev/null",
+        "tcp_apiserver": "nc -w 5 kubernetes.default.svc.cluster.local 443 </dev/null",
+        "tcp_other_namespace": "nc -w 5 kube-dns.kube-system.svc.cluster.local 9153 </dev/null",
+        "tcp_kubelet": f"nc -w 5 {node} 10250 </dev/null",
+    }
+    lines = ["echo PROBE_RAN"]
+    for name, cmd in checks.items():
+        lines.append(
+            f"if {cmd} >/dev/null 2>&1; then echo '{name} OPEN'; else echo '{name} BLOCKED'; fi"
+        )
+    return "; ".join(lines)
+
+
+def parse(out: str) -> dict[str, str]:
+    assert "PROBE_RAN" in out, out
+    return dict(re.findall(r"^(\w+) (OPEN|BLOCKED)$", out, flags=re.M))
+
+
+@pytest.fixture(scope="module")
+def control_results(cluster: str, control_ns: str) -> dict[str, str]:
+    return parse(probe(cluster, control_ns, egress_script(node_ip(cluster))))
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [None, {"kc.io/platform-client": "acl"}, {"kc.io/platform-client": "pages"}],
+    ids=["plain", "acl-client", "pages-client"],
 )
+def test_no_egress_beyond_cluster_dns(
+    cluster: str, control_results: dict[str, str], labels: dict[str, str] | None
+) -> None:
+    results = parse(probe(cluster, NAMESPACE, egress_script(node_ip(cluster)), labels))
+    assert results["dns_internal"] == "OPEN", results  # pod networking and cluster DNS work
+    for check, state in results.items():
+        if check == "dns_internal":
+            continue
+        if control_results.get(check) != "OPEN":
+            _unavailable(f"positive control for {check} did not connect; cannot verify block")
+        assert state == "BLOCKED", f"{check} reachable from {NAMESPACE}: {results}"
 
 
-def _check(target: str, label: str) -> str:
-    fetch = f"wget -q -T 5 -O /dev/null {target} >/dev/null 2>&1"
-    return f"{fetch} && echo {label}_OPEN || echo {label}_BLOCKED"
+# --- mock-platform L7 policy -------------------------------------------------
+
+HTTP_SCRIPT = """echo PROBE_RAN
+req() {
+  out=$(wget -q -T 5 -O /dev/null "$@" 2>&1); rc=$?
+  code=$(echo "$out" | grep -oE 'HTTP/1\\.[01] [0-9]{3}' | tail -1 | cut -d' ' -f2)
+  echo "RESULT rc=$rc code=${code:-none}"
+}
+"""
 
 
-def test_no_egress_to_internet(cluster: str) -> None:
-    out = _probe(
-        cluster,
-        f"echo PROBE_RAN; {_DNS}; {_check('http://1.1.1.1', 'IP')}; "
-        f"{_check('http://example.com', 'NAME')}",
-        platform_client=False,
-    )
+def http(cluster: str, client: str | None, method: str, path: str) -> str:
+    """The HTTP status seen by the probe, or 'none' when the connection was dropped."""
+    args = f"http://mock-platform{path}"
+    if method == "POST":
+        body = '{"user_id":"svc_sync"}'
+        args = f"--post-data='{body}' --header='Content-Type: application/json' {args}"
+    labels = {"kc.io/platform-client": client} if client else None
+    out = probe(cluster, NAMESPACE, HTTP_SCRIPT + f"req {args}", labels)
     assert "PROBE_RAN" in out, out
-    assert "DNS_OK" in out, out  # positive control: pod networking works, DNS allowed
-    assert "IP_BLOCKED" in out, out
-    assert "NAME_BLOCKED" in out, out
+    m = re.search(r"RESULT rc=(\d+) code=(\w+)", out)
+    assert m, out
+    return "200" if m.group(1) == "0" else m.group(2)
 
 
-def test_mock_platform_only_reachable_by_platform_clients(cluster: str) -> None:
-    target = "http://mock-platform/.well-known/jwks.json"
-    denied = _probe(cluster, f"echo PROBE_RAN; {_check(target, 'MP')}", platform_client=False)
-    allowed = _probe(cluster, f"echo PROBE_RAN; {_check(target, 'MP')}", platform_client=True)
-    assert "PROBE_RAN" in denied, denied
-    assert "MP_BLOCKED" in denied, denied
-    assert "MP_OPEN" in allowed, allowed  # positive control: the block is policy, not breakage
+# Reaching the app without a token yields 401/404 from the app itself (the positive
+# control that the path is open); Cilium's L7 deny is 403; an L3/L4 drop has no status.
+@pytest.mark.parametrize(
+    ("client", "method", "path", "expect"),
+    [
+        (None, "GET", "/.well-known/jwks.json", "none"),
+        ("acl", "GET", "/.well-known/jwks.json", "200"),
+        ("acl", "GET", "/api/me/spaces", "401"),
+        ("acl", "GET", "/api/pages/opc_o1", "403"),
+        ("acl", "GET", "/api/spaces/sp_opc/pages", "403"),
+        ("pages", "GET", "/api/pages/opc_o1", "404"),
+        ("pages", "GET", "/api/me/spaces", "403"),
+        ("acl", "POST", "/dev/token", "403"),
+        ("pages", "POST", "/dev/token", "403"),
+    ],
+)
+def test_mock_platform_l7_allow_list(
+    cluster: str, client: str | None, method: str, path: str, expect: str
+) -> None:
+    assert http(cluster, client, method, path) == expect
 
 
-def test_platform_client_still_has_no_internet(cluster: str) -> None:
-    out = _probe(cluster, f"echo PROBE_RAN; {_check('http://1.1.1.1', 'IP')}", platform_client=True)
-    assert "PROBE_RAN" in out, out
-    assert "IP_BLOCKED" in out, out
+def test_dev_endpoints_disabled_in_cluster(cluster: str) -> None:
+    out = kubectl(
+        cluster, "-n", NAMESPACE, "get", "deploy", "mock-platform",
+        "-o", "jsonpath={.spec.template.spec.containers[0].env}",
+    )  # fmt: skip
+    env = {e["name"]: e.get("value") for e in json.loads(out)}
+    assert env.get("KC_MOCK_DEV_ENDPOINTS") != "1"
+
+
+# --- pod hardening -------------------------------------------------------------
+
+
+def test_host_network_pods_rejected(cluster: str) -> None:
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "leak-hostnet"},
+        "spec": {
+            "hostNetwork": True,
+            "containers": [{"name": "c", "image": PROBE_IMAGE, "command": ["true"]}],
+        },
+    }
+    out = kubectl(
+        cluster, "-n", NAMESPACE, "apply", "--dry-run=server", "-f", "-",
+        stdin=json.dumps(pod), check=False,
+    )  # fmt: skip
+    assert "violates PodSecurity" in out, out
 
 
 def test_mock_platform_pod_is_hardened(cluster: str) -> None:
@@ -110,11 +242,8 @@ def test_mock_platform_pod_is_hardened(cluster: str) -> None:
         "{.items[0].spec.containers[0].securityContext.allowPrivilegeEscalation} "
         "{.items[0].spec.containers[0].securityContext.capabilities.drop}"
     )
-    out = subprocess.run(
-        [
-            "kubectl", "--context", cluster, "-n", NAMESPACE, "get", "pods",
-            "-l", "app.kubernetes.io/name=mock-platform", "-o", f"jsonpath={jsonpath}",
-        ],
-        capture_output=True, text=True, check=True,
-    ).stdout  # fmt: skip
+    out = kubectl(
+        cluster, "-n", NAMESPACE, "get", "pods",
+        "-l", "app.kubernetes.io/name=mock-platform", "-o", f"jsonpath={jsonpath}",
+    )  # fmt: skip
     assert out.split(" ", 3) == ["true", "true", "false", '["ALL"]'], out

@@ -1,6 +1,9 @@
 # All cluster commands pass --kube-context/--context explicitly and go through the guard.
 # The ambient current-context is never used.
 CLUSTER      ?= kc
+ifeq ($(shell printf '%s' '$(CLUSTER)' | grep -Ex '[a-z0-9-]+'),)
+$(error CLUSTER must match [a-z0-9-]+)
+endif
 KUBE_CONTEXT := kind-$(CLUSTER)
 NAMESPACE    ?= kc
 CILIUM_VERSION ?= 1.18.2
@@ -46,6 +49,9 @@ image:
 deploy: image
 	$(GUARD) $(KUBE_CONTEXT)
 	kind load docker-image $(MOCK_IMAGE) --name $(CLUSTER)
+	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) label namespace $(NAMESPACE) --overwrite \
+	  pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=latest
 	$(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --create-namespace --wait --timeout 5m
 
 kind-down:

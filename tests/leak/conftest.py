@@ -26,7 +26,7 @@ def users() -> dict[str, frozenset[str]]:
 
 @pytest.fixture
 def platform() -> Iterator[TestClient]:
-    with TestClient(create_app(TESTSET / "manifest.json")) as c:
+    with TestClient(create_app(TESTSET / "manifest.json", dev_endpoints=True)) as c:
         yield c
 
 
@@ -45,3 +45,14 @@ def captured_logs(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
     """Capture every log record at DEBUG and above for canary scanning."""
     caplog.set_level(logging.DEBUG)
     return caplog
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    skipped = [r for r in terminalreporter.stats.get("skipped", []) if "/infra/" in str(r.nodeid)]
+    if skipped:
+        terminalreporter.write_line(
+            f"WARNING: infrastructure isolation NOT verified ({len(skipped)} infra tests skipped). "
+            "After changing deploy/, run `make kind-up && make leak-infra`.",
+            red=True,
+            bold=True,
+        )
