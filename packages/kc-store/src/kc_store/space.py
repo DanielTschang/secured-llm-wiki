@@ -5,6 +5,7 @@ Content (titles, markdown, attachments) is encrypted with the space's key; objec
 and document IDs are IDs only.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +38,8 @@ class SourcePage:
     parent_id: str | None
     attachment_ids: tuple[AttachmentId, ...]
     labels: Labels
+    # (filename as referenced in the markdown, attachment id). Filenames are content.
+    attachment_map: tuple[tuple[str, AttachmentId], ...] = ()
 
     def __repr__(self) -> str:  # title is content
         return f"SourcePage(page_id={self.page_id!r}, revision={int(self.revision)})"
@@ -81,6 +84,8 @@ class SpaceStore:
         self.check_labels(page.labels)
         if set(attachments) - set(page.attachment_ids):
             raise ValueError("attachment not declared on the page")
+        if {a for _, a in page.attachment_map} - set(page.attachment_ids):
+            raise ValueError("attachment map references an undeclared attachment")
         if self._current_revision("source_pages", page.page_id) >= page.revision:
             raise StaleWrite
 
@@ -107,7 +112,13 @@ class SpaceStore:
             ),
             "parent_id": page.parent_id,
             "attachment_ids": [str(a) for a in page.attachment_ids],
+            "attachment_map_enc": seal(
+                self._keys,
+                self._ref("attachment_map", page.page_id, rev),
+                json.dumps([[n, str(a)] for n, a in page.attachment_map]).encode(),
+            ),
             "labels": sorted(page.labels.spaces),
+            "published": False,
         }
         if not self._docs.replace_if_revision_below("source_pages", page.page_id, doc):
             raise StaleWrite
@@ -122,6 +133,13 @@ class SpaceStore:
         title = open_sealed(
             self._keys, self._ref("page_title", page_id, rev), bytes(doc["title_enc"])
         )
+        amap = json.loads(
+            open_sealed(
+                self._keys,
+                self._ref("attachment_map", page_id, rev),
+                bytes(doc["attachment_map_enc"]),
+            )
+        )
         updated: datetime = doc["updated_date"]
         return SourcePage(
             page_id=page_id,
@@ -133,7 +151,21 @@ class SpaceStore:
             parent_id=doc["parent_id"],
             attachment_ids=tuple(AttachmentId(a) for a in doc["attachment_ids"]),
             labels=labels,
+            attachment_map=tuple((str(n), AttachmentId(a)) for n, a in amap),
         )
+
+    def unpublished_revision(self, page_id: PageId) -> Revision | None:
+        """The stored revision if its PageEvent has not been published yet."""
+        doc = self._docs.get("source_pages", page_id)
+        if doc is None or doc.get("published", False):
+            return None
+        return Revision(int(doc["revision"]))
+
+    def mark_published(self, page_id: PageId, revision: Revision) -> None:
+        if not self._docs.update_if_revision_equals(
+            "source_pages", page_id, int(revision), {"published": True}
+        ):
+            raise StaleWrite
 
     def touch_updated_date(self, page_id: PageId, revision: Revision, updated: datetime) -> None:
         """Content unchanged but the platform bumped updated_date: record it, no new revision."""

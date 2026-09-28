@@ -13,7 +13,7 @@ from enum import Enum
 from kc_ids import AttachmentId, PageId
 from kc_labels import SpaceId
 
-__all__ = ["IdLogger", "get_logger"]
+__all__ = ["IdLogger", "configure_logging", "get_logger"]
 
 _NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _ID_TYPES = (SpaceId, PageId, AttachmentId)
@@ -62,3 +62,15 @@ class IdLogger:
 
 def get_logger(name: str) -> IdLogger:
     return IdLogger(name)
+
+
+# Libraries that log request URLs, queries or payloads at INFO/DEBUG. URLs can carry
+# attachment filenames and other content, so they are held at WARNING.
+_NOISY = ("httpx", "httpcore", "botocore", "boto3", "urllib3", "neo4j", "pymongo", "nats")
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    """Call once at service start-up, before any client library is used."""
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s %(message)s")
+    for name in _NOISY:
+        logging.getLogger(name).setLevel(logging.WARNING)

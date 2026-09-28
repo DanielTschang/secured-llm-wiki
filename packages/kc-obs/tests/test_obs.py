@@ -59,3 +59,15 @@ def test_exceptions_logged_by_type_only(caplog: pytest.LogCaptureFixture) -> Non
     assert "KESTREL" not in msg
     assert json.loads(msg)["error"] == "RuntimeError"
     assert caplog.records[-1].exc_info is None
+
+
+def test_configure_logging_silences_third_party_request_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from kc_obs import configure_logging
+
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+    for name in ("httpx", "httpcore", "botocore", "urllib3", "neo4j", "pymongo", "nats"):
+        logging.getLogger(name).info("GET http://x/api/pages/p/attachments/secret-name.png")
+    assert "secret-name" not in caplog.text

@@ -1,0 +1,23 @@
+[project]
+name = "sync"
+version = "0.1.0"
+description = "Sync: fetch raw pages per space, encrypt, store, publish ID-only events"
+requires-python = ">=3.14"
+dependencies = [
+    "kc-labels", "kc-ids", "kc-obs", "kc-events", "kc-platform", "kc-store", "nats-py>=2.9",
+]
+
+[tool.uv.sources]
+kc-labels = { workspace = true }
+kc-ids = { workspace = true }
+kc-obs = { workspace = true }
+kc-events = { workspace = true }
+kc-platform = { workspace = true }
+kc-store = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sync"]

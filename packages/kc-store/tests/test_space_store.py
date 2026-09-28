@@ -149,3 +149,39 @@ def test_quarantine_records_ids_only(parts: tuple[FakeKeyService, MemoryDocs, Me
     s.quarantine(PageId("opc_secret"))
     assert s.is_quarantined(PageId("opc_secret"))
     assert docs.dump()["quarantine"] == [{"_id": "opc_secret"}]
+
+
+def test_attachment_names_stored_encrypted(
+    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
+) -> None:
+    from dataclasses import replace
+
+    _, docs, _ = parts
+    att = attachment_id_for(PNG)
+    p = replace(page(), attachment_map=(("o2_rules_2025.png", att),))
+    store(parts).put_source_page(p, "x", {att: PNG})
+    got = store(parts).get_source_page(PageId("opc_o2"))
+    assert got is not None and got.attachment_map == (("o2_rules_2025.png", att),)
+    assert "o2_rules" not in repr(docs.dump())
+
+
+def test_attachment_map_must_reference_declared_ids(
+    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
+) -> None:
+    from dataclasses import replace
+
+    p = replace(page(), attachment_map=(("x.png", attachment_id_for(b"undeclared")),))
+    with pytest.raises(ValueError, match="attachment"):
+        store(parts).put_source_page(p, "x", {})
+
+
+def test_publish_tracking(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs]) -> None:
+    s = store(parts)
+    s.put_source_page(page(1), "v1", {})
+    assert s.unpublished_revision(PageId("opc_o2")) == 1
+    s.mark_published(PageId("opc_o2"), Revision(1))
+    assert s.unpublished_revision(PageId("opc_o2")) is None
+    s.put_source_page(page(2), "v2", {})
+    assert s.unpublished_revision(PageId("opc_o2")) == 2
+    with pytest.raises(StaleWrite):
+        s.mark_published(PageId("opc_o2"), Revision(1))

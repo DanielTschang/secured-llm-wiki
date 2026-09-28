@@ -22,7 +22,7 @@ from kc_store.vault import VaultClient, VaultKeyService
 if TYPE_CHECKING:
     from mypy_boto3_s3 import S3Client
 
-__all__ = ["Endpoints", "SpaceContext", "open_space"]
+__all__ = ["Endpoints", "SpaceContext", "open_space", "open_store"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +62,11 @@ class SpaceContext:
         self.close()
 
 
-def open_space(
+def open_store(
     space_id: SpaceId, vault: VaultClient, endpoints: Endpoints | None = None
-) -> SpaceContext:
+) -> tuple[SpaceStore, MongoClient[dict[str, Any]]]:
+    """One space's document and object store, from that space's Vault credentials.
+    Returns the Mongo client so the caller can close it."""
     ep = endpoints or Endpoints()
     user, password = vault.database_creds(space_id)
     mongo: MongoClient[dict[str, Any]] = MongoClient(
@@ -80,17 +82,25 @@ def open_space(
         region_name="us-east-1",
         config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 2}),
     )
-    neo = vault.kv(f"spaces/{space_id}/neo4j")
-    driver: Driver = GraphDatabase.driver(  # pyright: ignore[reportUnknownMemberType]
-        ep.neo4j or neo["uri"], auth=(neo["username"], neo["password"])
-    )
-    graph_backend = Neo4jGraph(driver)
     store = SpaceStore(
         space_id,
         keys=VaultKeyService(vault),
         docs=MongoDocs(mongo[f"kc_{space_id}"]),
         blobs=S3Blobs(s3, s3_cfg["raw_bucket"]),
     )
+    return store, mongo
+
+
+def open_space(
+    space_id: SpaceId, vault: VaultClient, endpoints: Endpoints | None = None
+) -> SpaceContext:
+    ep = endpoints or Endpoints()
+    store, mongo = open_store(space_id, vault, ep)
+    neo = vault.kv(f"spaces/{space_id}/neo4j")
+    driver: Driver = GraphDatabase.driver(  # pyright: ignore[reportUnknownMemberType]
+        ep.neo4j or neo["uri"], auth=(neo["username"], neo["password"])
+    )
+    graph_backend = Neo4jGraph(driver)
     return SpaceContext(
         space_id, store, SpaceGraph(space_id, graph_backend), (mongo, graph_backend)
     )
