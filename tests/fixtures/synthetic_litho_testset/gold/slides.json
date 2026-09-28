@@ -1,0 +1,236 @@
+{
+  "common_c1#2": {
+    "point": "dense 與 iso 的最佳焦距不同，共同可用焦距範圍縮小",
+    "figures": [
+      {
+        "type": "bossung_curve",
+        "must_read": {
+          "dense_best_focus_um": -0.02,
+          "iso_best_focus_um": 0.03
+        },
+        "tolerance": 0.01,
+        "numbers_from_figure": true
+      }
+    ],
+    "concepts": [
+      "concept:bossung_curve",
+      "concept:best_focus",
+      "concept:iso_dense_bias"
+    ],
+    "tests": "圖的重點只能由文字決定：單看圖只會描述曲線，必須結合文字讀出 iso-focal 偏移"
+  },
+  "common_c1#3": {
+    "point": "ED window 中矩形可放入的最大寬度即為 DOF",
+    "figures": [
+      {
+        "type": "process_window",
+        "must_read": {
+          "dof_um": 0.12
+        },
+        "tolerance": 0.02,
+        "numbers_from_figure": true
+      }
+    ],
+    "concepts": [
+      "concept:process_window",
+      "concept:dof",
+      "concept:exposure_latitude"
+    ]
+  },
+  "common_c1#4": {
+    "point": "MEEF 定義，且 pitch 越小 MEEF 越大",
+    "figures": [
+      {
+        "type": "meef_plot",
+        "must_read": {
+          "meef_pitch_180": 1.2,
+          "meef_pitch_90": 2.8
+        },
+        "tolerance": 0.3,
+        "numbers_from_figure": true
+      }
+    ],
+    "concepts": [
+      "concept:meef"
+    ]
+  },
+  "common_c2#2": {
+    "point": "向量由圓心向外放射且隨半徑增大，屬於 magnification 誤差",
+    "figures": [
+      {
+        "type": "overlay_vector_map",
+        "must_read": {
+          "pattern": "magnification",
+          "max_nm": 6
+        },
+        "tolerance": 1,
+        "numbers_from_figure": true
+      }
+    ],
+    "concepts": [
+      "concept:overlay",
+      "concept:magnification_error"
+    ],
+    "tests": "文字未給答案（練習題），誤差型態必須由圖判讀"
+  },
+  "opc_o1#1": {
+    "point": "OPC 以 serif 與 hammerhead 補償轉角變圓與線端縮短",
+    "figures": [
+      {
+        "type": "schematic",
+        "must_read": {
+          "features": [
+            "serif",
+            "hammerhead"
+          ]
+        }
+      }
+    ],
+    "concepts": [
+      "concept:opc",
+      "concept:serif",
+      "concept:hammerhead"
+    ]
+  },
+  "opc_o1#2": {
+    "point": "2023 版 hotspot 規則，MEEF 門檻 3.0，模型 KESTREL-6",
+    "figures": [
+      {
+        "type": "screenshot",
+        "must_read": {
+          "model": "KESTREL-6",
+          "meef_threshold": 3.0,
+          "min_space_nm": 40,
+          "pullback_nm": 8
+        },
+        "numbers_from_figure": false
+      }
+    ],
+    "concepts": [
+      "concept:hotspot",
+      "concept:meef",
+      "concept:hammerhead",
+      "concept:bridging"
+    ],
+    "tests": "規則只存在於截圖中，需要 OCR；截圖文字是明確數值，不是近似判讀"
+  },
+  "opc_o1#3": {
+    "point": "2023 版模型校正 RMS 目標 < 1.5 nm，圖示 RMS 1.3 nm",
+    "figures": [
+      {
+        "type": "bar_chart",
+        "must_read": {
+          "rms_nm": 1.3
+        },
+        "numbers_from_figure": false
+      }
+    ],
+    "concepts": [
+      "concept:opc_model_calibration"
+    ]
+  },
+  "opc_o2#2": {
+    "point": "2025 版 MEEF hotspot 門檻收緊為 2.5，模型 KESTREL-7",
+    "figures": [
+      {
+        "type": "screenshot",
+        "must_read": {
+          "model": "KESTREL-7",
+          "meef_threshold": 2.5
+        },
+        "numbers_from_figure": false
+      }
+    ],
+    "concepts": [
+      "concept:hotspot",
+      "concept:meef"
+    ],
+    "tests": "版本演變：最新版為 2.5，2023 版 3.0 應只出現在版本演變段落"
+  },
+  "opc_o2#3": {
+    "point": "2025 版 RMS 目標 < 1.0 nm，圖示 0.9 nm",
+    "figures": [
+      {
+        "type": "bar_chart",
+        "must_read": {
+          "rms_nm": 0.9
+        },
+        "numbers_from_figure": false
+      }
+    ],
+    "concepts": [
+      "concept:opc_model_calibration"
+    ]
+  },
+  "opc_o2#4": {
+    "point": "OPC 模型在 contact layer 的 MEEF 假設值為 2.6",
+    "figures": [],
+    "concepts": [
+      "concept:meef",
+      "concept:opc"
+    ],
+    "must_not_contain": [
+      "3.4",
+      "R-CT-114"
+    ],
+    "tests": "跨 space 連結只保留文字、include 語法不得展開；本投影片的產物不可含任何 CD space 內容"
+  },
+  "cd_d1#2": {
+    "point": "晶圓邊緣 CD 偏小，約低 2 nm，為 CDU 主要來源",
+    "figures": [
+      {
+        "type": "wafer_map",
+        "must_read": {
+          "pattern": "radial_edge_low",
+          "edge_drop_nm": 2
+        },
+        "tolerance": 0.5,
+        "numbers_from_figure": true
+      }
+    ],
+    "concepts": [
+      "concept:cdu"
+    ]
+  },
+  "cd_d1#3": {
+    "point": "min space 出現 bridging（右圖）",
+    "figures": [
+      {
+        "type": "sem",
+        "must_read": {
+          "left": "normal",
+          "right": "bridging"
+        }
+      }
+    ],
+    "concepts": [
+      "concept:bridging"
+    ],
+    "tests": "左右對應只在文字中，需圖文一起讀"
+  },
+  "cd_d1#4": {
+    "point": "contact layer 實測 MEEF 約 3.4",
+    "figures": [
+      {
+        "type": "meef_plot",
+        "must_read": {
+          "meef_contact": 3.4
+        },
+        "tolerance": 0.2,
+        "numbers_from_figure": false
+      }
+    ],
+    "concepts": [
+      "concept:meef"
+    ],
+    "tests": "只使用別名『光罩誤差放大因子』，需對齊到 concept:meef；數值 3.4 標在圖例中"
+  },
+  "cd_d1#5": {
+    "point": "量測設定：recipe R-CT-114、每片 13 點、規格 45±1.5 nm",
+    "figures": [],
+    "concepts": [
+      "concept:cdu"
+    ],
+    "tests": "markdown 表格應轉為結構化參數"
+  }
+}

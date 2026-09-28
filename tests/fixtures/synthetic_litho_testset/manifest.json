@@ -1,0 +1,109 @@
+{
+  "spaces": {
+    "sp_common": {
+      "name": "黃光公開教材",
+      "visibility": "all_employees"
+    },
+    "sp_opc": {
+      "name": "OPC team",
+      "visibility": "restricted"
+    },
+    "sp_cd": {
+      "name": "CD team",
+      "visibility": "restricted"
+    }
+  },
+  "users": {
+    "u_general": [
+      "sp_common"
+    ],
+    "u_opc": [
+      "sp_common",
+      "sp_opc"
+    ],
+    "u_cd": [
+      "sp_common",
+      "sp_cd"
+    ],
+    "u_opc_cd": [
+      "sp_common",
+      "sp_opc",
+      "sp_cd"
+    ]
+  },
+  "pages": [
+    {
+      "page_id": "common_c1",
+      "space_id": "sp_common",
+      "title": "微影基礎：製程窗口與 MEEF",
+      "parent_id": "common_courses",
+      "version": 3,
+      "updated_at": "2025-11-02T09:00:00Z",
+      "path": "spaces/sp_common/pages/common_c1.md",
+      "slide_count": 5,
+      "attachments": [
+        "attachments/c1_bossung.png",
+        "attachments/c1_ed_window.png",
+        "attachments/c1_meef.png"
+      ]
+    },
+    {
+      "page_id": "common_c2",
+      "space_id": "sp_common",
+      "title": "對位誤差基礎",
+      "parent_id": "common_courses",
+      "version": 1,
+      "updated_at": "2024-06-15T09:00:00Z",
+      "path": "spaces/sp_common/pages/common_c2.md",
+      "slide_count": 3,
+      "attachments": [
+        "attachments/c2_overlay_map.png"
+      ]
+    },
+    {
+      "page_id": "opc_o1",
+      "space_id": "sp_opc",
+      "title": "OPC 實務入門（2023 版）",
+      "parent_id": "opc_courses",
+      "version": 2,
+      "updated_at": "2023-09-10T09:00:00Z",
+      "path": "spaces/sp_opc/pages/opc_o1.md",
+      "slide_count": 4,
+      "attachments": [
+        "attachments/o1_residual.png",
+        "attachments/o1_rules_2023.png",
+        "attachments/opc_schematic.png"
+      ]
+    },
+    {
+      "page_id": "opc_o2",
+      "space_id": "sp_opc",
+      "title": "OPC 實務入門（2025 版）",
+      "parent_id": "opc_courses",
+      "version": 1,
+      "updated_at": "2025-08-20T09:00:00Z",
+      "path": "spaces/sp_opc/pages/opc_o2.md",
+      "slide_count": 5,
+      "attachments": [
+        "attachments/o2_residual.png",
+        "attachments/o2_rules_2025.png",
+        "attachments/opc_schematic.png"
+      ]
+    },
+    {
+      "page_id": "cd_d1",
+      "space_id": "sp_cd",
+      "title": "CD 控制實務",
+      "parent_id": "cd_courses",
+      "version": 4,
+      "updated_at": "2025-10-01T09:00:00Z",
+      "path": "spaces/sp_cd/pages/cd_d1.md",
+      "slide_count": 6,
+      "attachments": [
+        "attachments/d1_contact_meef.png",
+        "attachments/d1_sem_bridge.png",
+        "attachments/d1_wafer_map.png"
+      ]
+    }
+  ]
+}

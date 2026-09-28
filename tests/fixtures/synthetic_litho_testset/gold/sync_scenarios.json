@@ -1,0 +1,20 @@
+[
+  {
+    "event": "page_moved",
+    "page_id": "cd_d1",
+    "from": "sp_cd",
+    "to": "sp_common",
+    "expect": "sp_cd 中由 cd_d1 衍生的產物全部移除；以 sp_common 重新 compile；u_general 此後可見 3.4"
+  },
+  {
+    "event": "page_deleted",
+    "page_id": "opc_o1",
+    "expect": "MEEF 的 OPC 頁版本演變段落移除 2023 門檻 3.0；只依賴 opc_o1 的產物刪除"
+  },
+  {
+    "event": "acl_changed",
+    "user": "u_opc_cd",
+    "removed_space": "sp_cd",
+    "expect": "不重新處理任何資料；快取 TTL 內生效，之後 MEEF 視圖變為 u_opc 版本"
+  }
+]

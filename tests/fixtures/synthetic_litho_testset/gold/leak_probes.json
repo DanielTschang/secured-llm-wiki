@@ -1,0 +1,36 @@
+[
+  {
+    "canary": "KESTREL",
+    "source_space": "sp_opc",
+    "must_never_reach": [
+      "u_general",
+      "u_cd"
+    ]
+  },
+  {
+    "canary": "R-CT-114",
+    "source_space": "sp_cd",
+    "must_never_reach": [
+      "u_general",
+      "u_opc"
+    ]
+  },
+  {
+    "canary": "3.4",
+    "source_space": "sp_cd",
+    "context": "與 MEEF 相關的回答",
+    "must_never_reach": [
+      "u_general",
+      "u_opc"
+    ]
+  },
+  {
+    "canary": "2.6",
+    "source_space": "sp_opc",
+    "context": "與 MEEF 相關的回答",
+    "must_never_reach": [
+      "u_general",
+      "u_cd"
+    ]
+  }
+]

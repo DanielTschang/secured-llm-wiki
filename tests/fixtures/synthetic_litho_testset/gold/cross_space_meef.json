@@ -1,0 +1,60 @@
+{
+  "concept": "concept:meef",
+  "views": {
+    "u_general": {
+      "expected_label": [],
+      "must_include": [
+        "MEEF 定義",
+        "pitch 越小 MEEF 越大"
+      ],
+      "must_not_include": [
+        "2.5",
+        "3.0",
+        "2.6",
+        "3.4",
+        "KESTREL",
+        "R-CT-114",
+        "跨 team 差異"
+      ]
+    },
+    "u_opc": {
+      "expected_label": [
+        "sp_opc"
+      ],
+      "must_include": [
+        "hotspot 門檻 2.5（2025）",
+        "版本演變：2023 為 3.0",
+        "contact 假設 2.6"
+      ],
+      "must_not_include": [
+        "3.4",
+        "R-CT-114",
+        "跨 team 差異"
+      ]
+    },
+    "u_cd": {
+      "expected_label": [
+        "sp_cd"
+      ],
+      "must_include": [
+        "contact 實測約 3.4"
+      ],
+      "must_not_include": [
+        "2.5",
+        "2.6",
+        "KESTREL",
+        "跨 team 差異"
+      ]
+    },
+    "u_opc_cd": {
+      "expected_label": [
+        "sp_cd",
+        "sp_opc"
+      ],
+      "must_include": [
+        "contact 假設 2.6（OPC）與實測 3.4（CD）不一致，並標明各自來源"
+      ],
+      "must_not_include": []
+    }
+  }
+}
