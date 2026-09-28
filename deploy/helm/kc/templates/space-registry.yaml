@@ -1,0 +1,13 @@
+# Space registry: IDs only, never names (invariant 7).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kc-space-registry
+data:
+  spaces: |
+    {{- range .Values.spaces }}
+    {{- if not (regexMatch "^sp_[a-z0-9_]+$" .id) }}
+    {{- fail (printf "invalid space id in values.spaces") }}
+    {{- end }}
+    - {{ .id }}
+    {{- end }}

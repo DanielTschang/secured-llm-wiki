@@ -1,0 +1,71 @@
+{{- if .Values.mockPlatform.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-platform
+  labels: { app.kubernetes.io/name: mock-platform }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: mock-platform }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: mock-platform }
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" . | nindent 6 }}
+      containers:
+        - name: mock-platform
+          image: {{ .Values.mockPlatform.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: {{ .Values.mockPlatform.port }} }
+          readinessProbe:
+            httpGet: { path: /.well-known/jwks.json, port: http }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-platform
+spec:
+  selector: { app.kubernetes.io/name: mock-platform }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+# Only pods explicitly labelled as platform clients may reach the mock platform.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mock-platform-ingress
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: mock-platform }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { kc.io/platform-client: "true" }
+      ports:
+        - { protocol: TCP, port: {{ .Values.mockPlatform.port }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: platform-client-egress
+spec:
+  podSelector:
+    matchLabels: { kc.io/platform-client: "true" }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: mock-platform }
+      ports:
+        - { protocol: TCP, port: {{ .Values.mockPlatform.port }} }
+{{- end }}

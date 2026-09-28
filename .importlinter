@@ -1,0 +1,19 @@
+[importlinter]
+root_packages =
+    kc_labels
+    kc_platform
+    mock_platform
+
+[importlinter:contract:labels-leaf]
+name = kc_labels depends on no other workspace package
+type = forbidden
+source_modules = kc_labels
+forbidden_modules =
+    kc_platform
+    mock_platform
+
+[importlinter:contract:services-independent]
+name = packages never import services
+type = forbidden
+source_modules = kc_platform
+forbidden_modules = mock_platform

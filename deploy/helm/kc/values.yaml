@@ -1,0 +1,11 @@
+# One entry per platform space. Per-space resources (storage, Vault roles, ...) are
+# generated from this list; M0 only renders the space registry.
+spaces:
+  - id: sp_common
+  - id: sp_opc
+  - id: sp_cd
+
+mockPlatform:
+  enabled: true
+  image: kc/mock-platform:dev
+  port: 8080

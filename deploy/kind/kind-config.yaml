@@ -1,0 +1,12 @@
+# Local dev cluster. The default CNI (kindnet) does not enforce NetworkPolicy,
+# so it is disabled and Cilium is installed instead (ADR-009).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kc
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: iptables
+  apiServerAddress: 127.0.0.1
+nodes:
+  - role: control-plane
+  - role: worker

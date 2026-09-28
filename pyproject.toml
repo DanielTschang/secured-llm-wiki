@@ -1,0 +1,61 @@
+[project]
+name = "knowledge-center"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+
+[tool.uv.sources]
+kc-labels = { workspace = true }
+kc-platform = { workspace = true }
+mock-platform = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "kc-labels",
+    "kc-platform",
+    "mock-platform",
+    "pytest>=8",
+    "hypothesis>=6",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "import-linter>=2",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -p no:cacheprovider"
+markers = [
+    "leak: application-layer leak tests (zero tolerance)",
+    "infra: infrastructure leak tests; require the local kind cluster",
+]
+testpaths = ["packages", "services", "tests/leak"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["tests/fixtures", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "S105", "S106", "RUF001"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S607", "RUF001"]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+strict = ["packages/*/src", "services/*/src"]
+pythonVersion = "3.14"
+include = ["packages", "services", "tests"]
+exclude = ["tests/fixtures", "**/.venv"]
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff.lint.isort]
+known-first-party = ["kc_labels", "kc_platform", "mock_platform", "tests"]
