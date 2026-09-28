@@ -86,8 +86,9 @@ SlideNote     slide_ref, point, figures[{type, reads, numbers_from_figure, confi
 Claim         claim_id, text, value?, unit?, concept_ids[],
               provenance[{page_id, revision, slide_no, attachment_id?}], labels
 Concept       canonical: concept:<slug>（來自公開術語表）；區域：local:<space_id>:<ulid>（名稱存於加密欄位）
-SpaceWikiPage page_id = <space_id>:<ulid>, type ∈ {concept, entity, course_summary, synthesis},
-              sections, wikilinks[page_id], embedded_figures[], claim_ids[], source_refs[], labels
+SpaceWikiPage OKF v0.2 文件（ADR-010）；路徑 <space>/wiki/<kind>/<ulid>.md，kind ∈ {concepts, entities, courses, synthesis}
+              frontmatter（host 寫入）：type, sources[], generated, verified, status, kc_labels, kc_concept
+              frontmatter（LLM 寫入）：title, description, tags；內文每句以 [^source_id] 註腳引用
 FiledAnswer   answer, provenance[], source_generations{space_id: n}, labels = 提問者當下全部可讀 space
 View          key = (concept_id, effective_labels, generations, template_version)
 Figure        attachment_id, space_id；只能經由驗權端點提供
@@ -97,7 +98,8 @@ Figure        attachment_id, space_id；只能經由驗權端點提供
 
 - `revision` 由同步服務為每個頁面單調遞增，作為 fencing token；`updated_date` 只用於偵測變更，`content_hash`（markdown 與全部附件 hash）用於去重。
 - 任何 ID 都不得包含名稱或內容，因為 ID 會進入 log 與 metrics（不變式 7）。
-- wikilink 只在同一 space 內解析；解析不到者保留文字、不建立連結。
+- 每個 space 的 wiki 是一個 OKF v0.2 bundle，存於該 space 的 bucket，是正本；MongoDB、LanceDB、Neo4j 都是從 bundle 解析出的索引。
+- 頁面間連結由 host 在同一 bundle 內解析為 OKF 路徑；解析不到者保留文字、不建立連結。
 
 ## 7. Ingest 流程（單一 space 內）
 
@@ -107,7 +109,7 @@ Figure        attachment_id, space_id；只能經由驗權端點提供
 2. **逐張判讀**：文字與圖片交錯送入 VLM，附課程脈絡。先判斷圖型，再套用 `schema/figure_guides/` 中該圖型的判讀指引。從圖上判讀的數值標記 `numbers_from_figure: true`。
 3. **課程層級整合**：依序讀完整門課的投影片筆記，補足脈絡，萃取概念、claims 與關係。
 4. **概念對齊**：對應到標準術語表；對不上者建立本 space 的區域概念，不得新增到術語表。
-5. **編譯 wiki 頁**：依共用模板撰寫（定義、原理、本 team 實務、常見問題、版本演變、相關概念、來源），以最新課程版本為主，嵌入代表性原圖。
+5. **撰寫 wiki 頁**：以 OKF v0.2 格式修改或新增本 space bundle 中的頁面（ADR-008、ADR-010）；concept 頁依共用模板撰寫（定義、原理、本 team 實務、常見問題、版本演變、相關概念），每句以註腳引用來源投影片，以最新課程版本為主，以 `kc-figure://` 嵌入代表性原圖；同時更新 bundle 的 `index.md` 與 `log.md`。
 6. **Grounding 驗證**：每句敘述連同其引用的原始投影片文字與圖片一起驗證；無依據者刪除或標示為推論。
 7. **建立索引與圖**：文字與圖片 embedding、BM25 統計寫入本 space 的 LanceDB table；頁面、wikilink、來源關係寫入本 space 的 Neo4j。Adamic-Adar、Louvain 社群、degree 只在本 space 內計算。
 

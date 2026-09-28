@@ -25,6 +25,7 @@
 - 只操作本機開發叢集（kind / k3d）。不得對任何其他 kube context 執行 kubectl 或 helm。
 - 先寫測試再寫實作。修改 `packages/kc-labels`、`packages/kc-store`、`packages/kc-graph`、`services/ingest-worker`、`services/query`、`services/sync` 或 `deploy/` 後，必須執行 `make leak`。
 - 完成一個元件或里程碑後，交給 `leak-reviewer` subagent 審查，FAIL 的項目修正前不得合併。
+- space wiki 以 OKF v0.2 bundle 撰寫（ADR-010）；frontmatter 的 `type`、`sources`、`generated`、`verified`、`status`、`kc_labels`、`kc_concept` 只能由程式寫入，LLM 只寫內文與 `title`／`description`／`tags`。
 - 模型呼叫一律透過 `packages/kc-models` 的介面，不得在其他地方直接呼叫模型 API。
 
 ## Repo 地圖

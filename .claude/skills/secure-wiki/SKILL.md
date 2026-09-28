@@ -59,6 +59,8 @@ LLM 的輸出可能洩漏任何輸入的任何資訊。因此：
 - 圖片經由不驗權的靜態網址或 CDN 提供。
 - 跨 space 的 include 在同步或 ingest 時被展開。
 - 過期的 ingest 結果覆蓋了頁面搬移或刪除後的狀態。
+- 讓 LLM 產生或修改 OKF frontmatter 的 `kc_labels`、`sources`、`verified`、`status`。
+- OKF bundle 的檔名或路徑含有概念名稱或標題（路徑會進入 log）。
 
 ## 依任務閱讀對應 reference
 

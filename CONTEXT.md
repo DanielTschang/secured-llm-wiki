@@ -49,6 +49,10 @@ _Avoid_: 共用詞庫
 **Space wiki page**:
 單一 space 內 ingest 出的頁面，labels 恰為該 space；分為 concept page、entity page、course summary page、synthesis page。
 
+**Bundle**:
+一個 space 的全部 space wiki page，以 OKF v0.2 格式組成的目錄，是該 space wiki 的正本。
+_Avoid_: wiki 資料夾、vault
+
 **Concept page**:
 以一個概念（原理、方法、量測指標）為單位、依共用模板撰寫的 space wiki page。
 
