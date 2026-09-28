@@ -152,8 +152,15 @@ def control_results(cluster: str, control_ns: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(
     "labels",
-    [None, {"kc.io/platform-client": "acl"}, {"kc.io/platform-client": "pages"}],
-    ids=["plain", "acl-client", "pages-client"],
+    [
+        None,
+        {"kc.io/platform-client": "acl"},
+        {"kc.io/platform-client": "pages"},
+        {"kc.io/component": "ingest-worker"},
+        {"kc.io/component": "sync", "kc.io/platform-client": "pages"},
+        {"kc.io/component": "test-runner"},
+    ],
+    ids=["plain", "acl-client", "pages-client", "ingest-worker", "sync", "test-runner"],
 )
 def test_no_egress_beyond_cluster_dns(
     cluster: str, control_results: dict[str, str], labels: dict[str, str] | None
@@ -274,3 +281,45 @@ def test_mock_platform_pod_is_hardened(cluster: str) -> None:
         "-l", "app.kubernetes.io/name=mock-platform", "-o", f"jsonpath={jsonpath}",
     )  # fmt: skip
     assert out.split(" ", 3) == ["true", "true", "false", '["ALL"]'], out
+
+
+# --- M1: storage reachability by role --------------------------------------------------
+
+STORAGE = {
+    "neo4j_opc": "kc-neo4j-sp-opc 7687",
+    "neo4j_cd": "kc-neo4j-sp-cd 7687",
+    "vault": "kc-vault 8200",
+    "minio": "kc-minio 9000",
+    "mongodb": "kc-mongodb 27017",
+    "nats": "kc-nats 4222",
+}
+
+
+def storage_reach(cluster: str, labels: dict[str, str] | None) -> dict[str, str]:
+    lines = ["echo PROBE_RAN"]
+    for name, target in STORAGE.items():
+        lines.append(
+            f"if nc -w 5 {target} </dev/null >/dev/null 2>&1; "
+            f"then echo '{name} OPEN'; else echo '{name} BLOCKED'; fi"
+        )
+    out = probe(cluster, NAMESPACE, "; ".join(lines), labels)
+    assert "PROBE_RAN" in out, out
+    results = dict(re.findall(r"^(\w+) (OPEN|BLOCKED)$", out, flags=re.M))
+    assert set(results) == set(STORAGE), out
+    return results
+
+
+def test_storage_reachable_only_by_its_clients(cluster: str) -> None:
+    worker = storage_reach(cluster, {"kc.io/component": "ingest-worker"})
+    sync = storage_reach(cluster, {"kc.io/component": "sync", "kc.io/platform-client": "pages"})
+    plain = storage_reach(cluster, None)
+    # Positive control: the ingest worker reaches everything it needs.
+    assert set(worker.values()) == {"OPEN"}, worker
+    # Sync never touches the graph; everything else it needs is open.
+    assert sync == {
+        **{k: "OPEN" for k in STORAGE},
+        "neo4j_opc": "BLOCKED",
+        "neo4j_cd": "BLOCKED",
+    }, sync
+    # An unlabelled pod reaches nothing.
+    assert set(plain.values()) == {"BLOCKED"}, plain

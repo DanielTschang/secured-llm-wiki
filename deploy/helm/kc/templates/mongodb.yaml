@@ -62,4 +62,4 @@ spec:
   endpointSelector:
     matchLabels: { kc.io/component: mongodb }
   ingress:
-    {{- include "kc.ingressFrom" (dict "from" (list "sync" "ingest-worker" "test-runner" "vault") "port" 27017) | nindent 4 }}
+    {{- include "kc.ingressFrom" (dict "from" (include "kc.clients" (list $ (list "sync" "ingest-worker" "vault")) | fromJsonArray) "port" 27017) | nindent 4 }}

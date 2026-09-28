@@ -1,0 +1,161 @@
+"""End to end in the local cluster: sync -> encrypted storage -> ID-only events -> ingest
+subprocesses. Checks the M1 criteria against the real deployment."""
+
+import json
+import os
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import ExitStack
+from typing import Any
+
+import boto3
+import httpx
+import pytest
+from pymongo import MongoClient
+
+from tests.leak.harness import assert_no_content, load_manifest
+from tests.support.cluster import NAMESPACE, kubectl, local_cluster_ok, port_forward
+
+pytestmark = pytest.mark.infra
+
+SPACES = ["sp_common", "sp_opc", "sp_cd"]
+ROOT_TOKEN = "root"  # Vault dev mode
+MINIO_ROOT = ("kc-minio-root", "kc-dev-minio-root")
+
+
+@pytest.fixture(scope="module")
+def ports() -> Iterator[dict[str, int]]:
+    if not local_cluster_ok():
+        if os.environ.get("KC_REQUIRE_INFRA") == "1":
+            pytest.fail("local cluster not available")
+        pytest.skip("local cluster not available (make kind-up)")
+    with ExitStack() as stack:
+        yield {
+            "vault": stack.enter_context(port_forward("kc-vault", 8200)),
+            "mongo": stack.enter_context(port_forward("kc-mongodb", 27017)),
+            "minio": stack.enter_context(port_forward("kc-minio", 9000)),
+        }
+
+
+def space_db(ports: dict[str, int], space: str) -> Any:
+    """Read access to one space's database with that space's own dynamic credentials."""
+    creds = httpx.get(
+        f"http://127.0.0.1:{ports['vault']}/v1/database/creds/{space}",
+        headers={"X-Vault-Token": ROOT_TOKEN},
+    ).json()["data"]
+    client: MongoClient[dict[str, Any]] = MongoClient(
+        f"mongodb://127.0.0.1:{ports['mongo']}/",
+        username=creds["username"], password=creds["password"], authSource="admin",
+        directConnection=True,
+    )  # fmt: skip
+    return client[f"kc_{space}"]
+
+
+def run_sync() -> str:
+    name = f"kc-sync-e2e-{uuid.uuid4().hex[:6]}"
+    kubectl("-n", NAMESPACE, "create", "job", "--from=cronjob/kc-sync", name)
+    kubectl("-n", NAMESPACE, "wait", "--for=condition=complete", "--timeout=300s", f"job/{name}")
+    return kubectl("-n", NAMESPACE, "logs", f"job/{name}")
+
+
+def space_reports(logs: str) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for line in logs.splitlines():
+        if '"space_synced"' in line:
+            rec = json.loads(line[line.index("{") :])
+            out[rec["space_id"]] = rec
+    return out
+
+
+def wait_ingested(
+    ports: dict[str, int], expected: dict[str, set[str]]
+) -> dict[str, dict[str, int]]:
+    """Wait until every page's ingest run matches its stored revision."""
+    deadline = time.monotonic() + 180
+    while True:
+        revisions: dict[str, dict[str, int]] = {}
+        done = True
+        for space, page_ids in expected.items():
+            db = space_db(ports, space)
+            pages = {d["_id"]: d["revision"] for d in db["source_pages"].find({}, {"revision": 1})}
+            runs = {d["_id"]: d for d in db["ingest_runs"].find()}
+            revisions[space] = pages
+            for pid in page_ids:
+                run = runs.get(pid)
+                if (
+                    pid not in pages
+                    or run is None
+                    or run["revision"] != pages[pid]
+                    or run["status"] != "stub_done"
+                ):
+                    done = False
+        if done:
+            return revisions
+        if time.monotonic() > deadline:
+            raise AssertionError(f"ingest did not complete: {revisions}")
+        time.sleep(3)
+
+
+def expected_pages() -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {s: set() for s in SPACES}
+    for p in load_manifest()["pages"]:
+        out[p["space_id"]].add(p["page_id"])
+    return out
+
+
+def test_sync_then_ingest_then_idempotent_resync(ports: dict[str, int]) -> None:
+    expected = expected_pages()
+    run_sync()
+    before = wait_ingested(ports, expected)
+    for space, pages in expected.items():
+        assert set(before[space]) >= pages, f"{space} is missing pages"
+        # Each space database holds only its own pages.
+        assert set(before[space]) - pages <= {p for p in before[space] if p.startswith("it_")}
+
+    reports = space_reports(run_sync())
+    assert set(reports) == set(SPACES)
+    for rec in reports.values():
+        assert rec["new"] == 0 and rec["changed"] == 0, rec
+        assert rec["publish_failed"] == 0, rec
+    after = wait_ingested(ports, expected)
+    assert after == before  # unchanged updated_date: no new revisions
+
+
+def test_raw_objects_are_ciphertext(ports: dict[str, int]) -> None:
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"http://127.0.0.1:{ports['minio']}",
+        aws_access_key_id=MINIO_ROOT[0],
+        aws_secret_access_key=MINIO_ROOT[1],
+        region_name="us-east-1",
+    )
+    seen = 0
+    for space in SPACES:
+        bucket = f"kc-{space.replace('_', '-')}-raw"
+        for obj in s3.list_objects_v2(Bucket=bucket).get("Contents", []):
+            if obj.get("Key", "").startswith("pages/it_"):
+                continue  # integration-test objects (some deliberately unsealed)
+            body = s3.get_object(Bucket=bucket, Key=obj.get("Key", ""))["Body"].read()
+            assert body.startswith(b"KC1\x00"), "object is not sealed"
+            assert_no_content(body.decode("utf-8", errors="ignore"))
+            assert b"\x89PNG" not in body
+            seen += 1
+    assert seen >= 5 + 12  # 5 pages + their attachments
+
+
+def test_no_content_in_any_pod_log() -> None:
+    if not local_cluster_ok():
+        pytest.skip("local cluster not available")
+    pods = kubectl(
+        "-n", NAMESPACE, "get", "pods", "-o", "jsonpath={.items[*].metadata.name}"
+    ).split()
+    logs = "\n".join(
+        kubectl("-n", NAMESPACE, "logs", pod, "--all-containers", "--tail=-1", check=False)
+        for pod in pods
+    )
+    assert "task_finished" in logs and "space_synced" in logs  # positive control
+    assert_no_content(logs)
+    for p in load_manifest()["pages"]:
+        for a in p["attachments"]:
+            assert a.rsplit("/", 1)[1] not in logs, "attachment filename in pod logs"

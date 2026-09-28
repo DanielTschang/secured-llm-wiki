@@ -73,5 +73,5 @@ spec:
   endpointSelector:
     matchLabels: { kc.io/component: neo4j, kc.io/space: {{ .id }} }
   ingress:
-    {{- include "kc.ingressFrom" (dict "from" (list "ingest-worker" "test-runner") "port" 7687) | nindent 4 }}
+    {{- include "kc.ingressFrom" (dict "from" (include "kc.clients" (list $ (list "ingest-worker")) | fromJsonArray) "port" 7687) | nindent 4 }}
 {{- end }}

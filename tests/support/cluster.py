@@ -17,8 +17,14 @@ CONTEXT = os.environ.get("KC_KUBE_CONTEXT", "kind-kc")
 NAMESPACE = os.environ.get("KC_NAMESPACE", "kc")
 
 
+def guard_reason(ctx: str = CONTEXT) -> str | None:
+    """None if ctx is the local cluster, else the guard's refusal message."""
+    r = subprocess.run([str(GUARD), ctx], capture_output=True, text=True, check=False)
+    return None if r.returncode == 0 else (r.stderr.strip() or f"guard exit {r.returncode}")
+
+
 def local_cluster_ok(ctx: str = CONTEXT) -> bool:
-    return subprocess.run([str(GUARD), ctx], capture_output=True, check=False).returncode == 0
+    return guard_reason(ctx) is None
 
 
 def _free_port() -> int:
@@ -29,8 +35,8 @@ def _free_port() -> int:
 
 @contextlib.contextmanager
 def port_forward(service: str, remote: int, ctx: str = CONTEXT) -> Iterator[int]:
-    if not local_cluster_ok(ctx):
-        raise RuntimeError("refusing: not a local cluster context")
+    if (reason := guard_reason(ctx)) is not None:
+        raise RuntimeError(f"refusing: {reason}")
     local = _free_port()
     proc = subprocess.Popen(
         ["kubectl", "--context", ctx, "-n", NAMESPACE, "port-forward",
@@ -48,3 +54,15 @@ def port_forward(service: str, remote: int, ctx: str = CONTEXT) -> Iterator[int]
     finally:
         proc.terminate()
         proc.wait()
+
+
+def kubectl(*args: str, stdin: str | None = None, check: bool = True, ctx: str = CONTEXT) -> str:
+    if (reason := guard_reason(ctx)) is not None:
+        raise RuntimeError(f"refusing: {reason}")
+    result = subprocess.run(
+        ["kubectl", "--context", ctx, *args],
+        input=stdin, capture_output=True, text=True, timeout=600, check=False,
+    )  # fmt: skip
+    if check and result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout + result.stderr

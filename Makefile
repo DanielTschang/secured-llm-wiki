@@ -20,7 +20,7 @@ GUARD        := scripts/require-local-context.sh
 KUBECTL      := kubectl --context $(KUBE_CONTEXT)
 HELM         := helm --kube-context $(KUBE_CONTEXT)
 
-.PHONY: test integration leak leak-infra eval lint kind-up kind-down deploy images
+.PHONY: sync-now test integration leak leak-infra eval lint kind-up kind-down deploy images
 
 test:
 	uv run pytest packages services
@@ -59,8 +59,13 @@ MINIO_IMAGE  := kc/minio:$(MINIO_TAG)
 GENERATED    := deploy/.generated/values.yaml
 HELM_KC       = $(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --wait --timeout 10m
 
+APP_IMAGE    ?= kc/app:dev
+TEST_IMAGE   ?= kc/test-runner:dev
+
 images:
 	docker build -f services/mock-platform/Dockerfile -t $(MOCK_IMAGE) .
+	docker build -f deploy/images/app/Dockerfile --target app -t $(APP_IMAGE) .
+	docker build -f deploy/images/app/Dockerfile --target test-runner -t $(TEST_IMAGE) .
 	docker image inspect $(MINIO_IMAGE) >/dev/null 2>&1 || \
 	  docker build --build-arg MINIO_TAG=$(MINIO_TAG) -t $(MINIO_IMAGE) deploy/images/minio
 
@@ -68,7 +73,7 @@ images:
 # hashes to $(GENERATED). Phase 2: NATS and applications. Then the NATS stream.
 deploy: images
 	$(GUARD) $(KUBE_CONTEXT)
-	kind load docker-image $(MOCK_IMAGE) $(MINIO_IMAGE) --name $(CLUSTER)
+	kind load docker-image $(MOCK_IMAGE) $(MINIO_IMAGE) $(APP_IMAGE) $(TEST_IMAGE) --name $(CLUSTER)
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(KUBECTL) label namespace $(NAMESPACE) --overwrite \
 	  pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=latest
@@ -76,6 +81,12 @@ deploy: images
 	uv run python scripts/dev_bootstrap.py infra --context $(KUBE_CONTEXT)
 	$(HELM_KC) -f $(GENERATED)
 	uv run python scripts/dev_bootstrap.py post --context $(KUBE_CONTEXT)
+
+# Run the sync CronJob once now and wait for it.
+sync-now:
+	$(GUARD) $(KUBE_CONTEXT)
+	$(KUBECTL) -n $(NAMESPACE) create job --from=cronjob/kc-sync kc-sync-manual-$$(date +%s) -o name \
+	  | xargs -I{} $(KUBECTL) -n $(NAMESPACE) wait --for=condition=complete --timeout=300s {}
 
 # Vault runs in dev mode (in memory): if it restarts, keys are gone. Recreate the cluster.
 kind-down:

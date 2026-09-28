@@ -21,6 +21,8 @@ spec:
           env:
             # /dev/* (token issuing, fault and ACL controls) stays off in the cluster.
             - { name: KC_MOCK_DEV_ENDPOINTS, value: "0" }
+            # Hash only; the svc_sync client secret itself lives in Vault.
+            - { name: KC_MOCK_SVC_SYNC_SECRET_SHA256, value: {{ .Values.mockPlatform.svcSyncSecretSha256 | quote }} }
           ports:
             - { name: http, containerPort: {{ .Values.mockPlatform.port }} }
           readinessProbe:
@@ -65,6 +67,7 @@ spec:
         - ports: [{ port: "{{ .Values.mockPlatform.port }}", protocol: TCP }]
           rules:
             http:
+              - { method: POST, path: "/oauth/token" }
               - { method: GET, path: "/api/spaces/sp_[a-z0-9_]+/pages" }
               - { method: GET, path: "/api/pages/[A-Za-z0-9_]+" }
               - { method: GET, path: "/api/pages/[A-Za-z0-9_]+/attachments/[A-Za-z0-9_.-]+" }

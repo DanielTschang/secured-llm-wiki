@@ -1,0 +1,124 @@
+{{- if .Values.apps.enabled }}
+{{- $egress := dict "vault" 8200 "minio" 9000 "mongodb" 27017 "nats" 4222 }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kc-sync
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kc-ingest-worker
+automountServiceAccountToken: false
+---
+# Sync reads every space (fetch, encrypt, store, publish) and nothing else: no graph,
+# no model service. Pages-client role on the platform's L7 policy.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kc-sync
+spec:
+  schedule: {{ .Values.sync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            kc.io/component: sync
+            kc.io/platform-client: pages
+        spec:
+          serviceAccountName: kc-sync
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          {{- include "kc.podSecurity" (dict) | nindent 10 }}
+          containers:
+            - name: sync
+              image: {{ .Values.images.app }}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "sync.main"]
+              env:
+                {{- include "kc.appEnv" . | nindent 16 }}
+                - { name: KC_PLATFORM_URL, value: "http://mock-platform" }
+              {{- include "kc.containerSecurity" . | nindent 14 }}
+              volumeMounts:
+                - { name: vault-token, mountPath: /var/run/secrets/kc, readOnly: true }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            {{- include "kc.vaultTokenVolume" . | nindent 12 }}
+            - { name: tmp, emptyDir: {} }
+---
+# ingest-worker: one subprocess per task holding only that space's child token (ADR-006).
+# No platform access and no outbound path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kc-ingest-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { kc.io/component: ingest-worker }
+  template:
+    metadata:
+      labels: { kc.io/component: ingest-worker }
+    spec:
+      serviceAccountName: kc-ingest-worker
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" (dict) | nindent 6 }}
+      containers:
+        - name: ingest-worker
+          image: {{ .Values.images.app }}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ingest_worker.main"]
+          env:
+            {{- include "kc.appEnv" . | nindent 12 }}
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: vault-token, mountPath: /var/run/secrets/kc, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        {{- include "kc.vaultTokenVolume" . | nindent 8 }}
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-sync-egress
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: sync }
+  egress:
+    {{- range $component, $port := $egress }}
+    - toEndpoints:
+        - matchLabels: { kc.io/component: {{ $component }} }
+      toPorts:
+        - ports: [{ port: "{{ $port }}", protocol: TCP }]
+    {{- end }}
+---
+{{- $workers := list "ingest-worker" }}
+{{- if .Values.devTestRunner }}{{ $workers = append $workers "test-runner" }}{{ end }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-ingest-worker-egress
+spec:
+  endpointSelector:
+    matchExpressions:
+      - { key: kc.io/component, operator: In, values: {{ toJson $workers }} }
+  egress:
+    {{- range $component, $port := $egress }}
+    - toEndpoints:
+        - matchLabels: { kc.io/component: {{ $component }} }
+      toPorts:
+        - ports: [{ port: "{{ $port }}", protocol: TCP }]
+    {{- end }}
+    - toEndpoints:
+        - matchLabels: { kc.io/component: neo4j }
+      toPorts:
+        - ports: [{ port: "7687", protocol: TCP }]
+{{- end }}

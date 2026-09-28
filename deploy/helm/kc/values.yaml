@@ -9,7 +9,14 @@ spaces:
 apps:
   enabled: false
 
+# Dev only: lets the in-cluster isolation test runner (tests/leak/infra) reach storage.
+devTestRunner: true
+
+sync:
+  schedule: "*/15 * * * *"
+
 images:
+  app: kc/app:dev
   mockPlatform: kc/mock-platform:dev
   vault: hashicorp/vault:1.20
   minio: kc/minio:RELEASE.2025-10-15T17-29-55Z

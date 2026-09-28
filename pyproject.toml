@@ -54,6 +54,7 @@ markers = [
     "leak: application-layer leak tests (zero tolerance)",
     "infra: infrastructure leak tests; require the local kind cluster",
     "integration: adapters against real services in the local kind cluster",
+    "in_cluster: runs inside the cluster in the test-runner Job",
 ]
 testpaths = ["packages", "services", "tests/leak"]
 
@@ -68,7 +69,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "scripts/**" = ["S603", "S607"]  # dev tooling that shells out to kubectl
 "**/tests/**" = ["S101", "S105", "S106", "RUF001"]
-"tests/**" = ["S101", "S105", "S106", "S603", "S607", "RUF001"]
+"tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "RUF001"]  # S108: /tmp inside test pods
 
 [tool.pyright]
 typeCheckingMode = "standard"

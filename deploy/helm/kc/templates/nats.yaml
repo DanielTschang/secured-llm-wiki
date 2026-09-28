@@ -110,5 +110,5 @@ spec:
   endpointSelector:
     matchLabels: { kc.io/component: nats }
   ingress:
-    {{- include "kc.ingressFrom" (dict "from" (list "sync" "ingest-worker" "test-runner") "port" 4222) | nindent 4 }}
+    {{- include "kc.ingressFrom" (dict "from" (include "kc.clients" (list $ (list "sync" "ingest-worker")) | fromJsonArray) "port" 4222) | nindent 4 }}
 {{- end }}

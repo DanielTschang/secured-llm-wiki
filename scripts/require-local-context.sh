@@ -15,7 +15,9 @@ if [[ ! "$ctx" =~ ^kind-[a-z0-9-]+$ ]]; then
 fi
 [[ "${2:-}" == "--allow-missing" ]] && exit 0
 
-if ! kubectl config get-contexts -o name 2>/dev/null | grep -qx -- "$ctx"; then
+# Capture first: with pipefail, `cmd | grep -q` fails when grep exits early (SIGPIPE).
+contexts="$(kubectl config get-contexts -o name 2>/dev/null || true)"
+if ! grep -qx -- "$ctx" <<<"$contexts"; then
   echo "refusing: context '$ctx' does not exist; run 'make kind-up'" >&2
   exit 4
 fi
@@ -30,7 +32,8 @@ port="${BASH_REMATCH[1]}"
 # kind binds 127.0.0.1 only (apiServerAddress). The port must be the one Docker
 # publishes for this cluster's control plane, so a same-named tunnel is refused too.
 name="${ctx#kind-}"
-if ! kind get clusters 2>/dev/null | grep -qx -- "$name"; then
+clusters="$(kind get clusters 2>/dev/null || true)"
+if ! grep -qx -- "$name" <<<"$clusters"; then
   echo "refusing: no local kind cluster named '$name'" >&2
   exit 6
 fi
