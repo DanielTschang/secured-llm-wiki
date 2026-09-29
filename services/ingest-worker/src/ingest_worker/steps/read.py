@@ -8,7 +8,6 @@ is retried once, then the note is recorded as failed (never guessed).
 """
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ingest_worker.steps.common import salted, validate_salt
 from ingest_worker.steps.parse import Slide, TextSegment
 from kc_ids import AttachmentId, Revision
 from kc_labels import Labels
@@ -222,11 +222,6 @@ def _slide_parts(slide: Slide, images: Mapping[AttachmentId, bytes]) -> list[Par
     return parts
 
 
-def _salted(cache_salt: str, *parts: Part) -> Message:
-    """System message that starts with the space's cache salt (see read_slide)."""
-    return Message("system", [TextPart(f"[{cache_salt}]"), *parts])
-
-
 def _classify(
     model: VisionModel, slide: Slide, images: Mapping[AttachmentId, bytes], cache_salt: str
 ) -> list[str] | None:
@@ -239,7 +234,7 @@ def _classify(
         'Output {"figure_types": [...]}.'
     )
     messages = [
-        _salted(cache_salt, TextPart(_ROLE)),
+        salted(cache_salt, TextPart(_ROLE)),
         Message("user", [*_slide_parts(slide, images), instruction]),
     ]
     for _ in range(2):
@@ -268,7 +263,7 @@ def _read(
     cache_salt: str,
 ) -> NoteBody | None:
     guides = [res.guides[t] for t in dict.fromkeys(types) if t in res.guides]
-    system = _salted(cache_salt, TextPart(_ROLE), TextPart(res.common), *map(TextPart, guides))
+    system = salted(cache_salt, TextPart(_ROLE), TextPart(res.common), *map(TextPart, guides))
     header = [
         f"課名：{ctx.course_title}",
         f"前一張投影片重點：{ctx.previous_point or '（無）'}",
@@ -326,8 +321,7 @@ def read_slide(
     """`cache_salt` is a per-space secret (derived from the space's HMAC key) placed first in
     every prompt, so prompts of different spaces never share a prefix on a shared model
     server: its prefix/KV cache cannot leak one space's prompts to another (ADR-013)."""
-    if re.fullmatch(r"[0-9a-f]{32}", cache_salt) is None:
-        raise ValueError("cache salt must be 32 lowercase hex characters")
+    validate_salt(cache_salt)
 
     def note(body: NoteBody | None) -> SlideNote:
         status: Literal["ok", "failed"] = "ok" if body is not None else "failed"
