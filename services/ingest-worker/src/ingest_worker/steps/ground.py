@@ -61,15 +61,26 @@ def _is_prose(line: str) -> bool:
     )
 
 
+_LIST_MARKER = re.compile(r"^\s*(?:[-*]\s+)+")
+
+
 def split_sentences(body: str) -> list[Sentence]:
+    """Prose sentences with their footnotes. List markers are not part of a sentence, and a
+    fragment that is only footnotes belongs to the sentence before it."""
     out: list[Sentence] = []
     for i, line in enumerate(body.split("\n")):
         if not _is_prose(line):
             continue
-        for m in _SENTENCE.finditer(line):
+        for m in _SENTENCE.finditer(_LIST_MARKER.sub("", line)):
             text = m.group(0).strip()
-            if text and text not in {"-", "*"}:
+            if not text or text in {"-", "*"}:
+                continue
+            if _REF.sub("", text).strip() == "" and out and out[-1].line == i:
+                prev = out.pop()
+                text = prev.text + text.replace(" ", "")
                 out.append(Sentence(i, text, tuple(_REF.findall(text))))
+                continue
+            out.append(Sentence(i, text, tuple(_REF.findall(text))))
     return out
 
 

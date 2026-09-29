@@ -7,6 +7,7 @@ description, tags and the body only; the host builds the frontmatter, cleans the
 index.md and log.md.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ingest_worker.steps.common import ROLE, salted
+from ingest_worker.steps.ground import Sentence, split_sentences
 from ingest_worker.steps.integrate import Claim
 from ingest_worker.steps.read import Resources
 from kc_models import Message, ModelError, TextPart, VisionModel
@@ -106,6 +108,87 @@ def _without_defs(body: str) -> str:
     return "\n".join(line for line in body.split("\n") if not line.startswith("[^")).rstrip()
 
 
+_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
+_REF = re.compile(r"\[\^([A-Za-z0-9_#.-]+)\]")
+
+
+def _numbers(text: str) -> set[float]:
+    return {float(n) for n in _NUMBER.findall(_REF.sub("", text))}
+
+
+def _place_versions(
+    body: str,
+    evolution: str,
+    current: Sequence[Claim],
+    old: Sequence[Claim],
+    current_ids: set[str],
+    old_ids: set[str],
+) -> str:
+    """Deterministic placement (ADR-008 made structural): sentences citing only superseded
+    sources, or stating a value only superseded claims have, go to 版本演變; sentences
+    citing unknown sources are dropped; if the model wrote no history, the host lists the
+    superseded claims. Grounding then checks every sentence against its sources."""
+    known = current_ids | old_ids
+    old_only = {c.value for c in old if c.value is not None} - {
+        c.value for c in current if c.value is not None
+    }
+    history: list[str] = []
+    main_lines: list[str] = []
+    lines = _drop_evolution(body).split("\n")
+    by_line: dict[int, list[Sentence]] = {}
+    for s in split_sentences("\n".join(lines)):
+        by_line.setdefault(s.line, []).append(s)
+    for i, line in enumerate(lines):
+        if i not in by_line:
+            if not line.strip() or line.startswith("#") or line.lstrip().startswith("!"):
+                main_lines.append(line)
+            continue
+        kept: list[str] = []
+        for s in by_line[i]:
+            refs = set(s.refs)
+            if refs - known:
+                continue  # cites something this page does not have
+            if (refs and refs <= old_ids) or (_numbers(s.text) & old_only):
+                history.append(s.text)
+            else:
+                kept.append(s.text)
+        if kept:
+            main_lines.append("".join(kept))
+    for s in split_sentences(evolution.replace(_EVOLUTION, "")):
+        if not set(s.refs) - known:
+            history.append(s.text)
+    if old and not history:
+        for c in sorted(old, key=lambda c: c.course_version):
+            refs = "".join(f"[^{source_id(p, n)}]" for p, _, n in c.provenance)
+            history.append(f"（{c.course_version.date().isoformat()} 版）{c.text}。{refs}")
+    main = "\n".join(_drop_empty_headings(main_lines)).strip()
+    if not history:
+        return main + "\n"
+    return main + "\n\n" + _EVOLUTION + "\n" + "\n".join(f"- {h}" for h in history) + "\n"
+
+
+def _drop_empty_headings(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        if line.startswith("#"):
+            nxt = next((x for x in lines[i + 1 :] if x.strip()), "")
+            if not nxt or nxt.startswith("#"):
+                continue
+        out.append(line)
+    return out
+
+
+def _demote(store: SpaceStore, path: str, current: tuple[str, str]) -> None:
+    """A page that could not be rewritten must not stay `stable` with outdated content."""
+    doc = parse(current[0])
+    fm = {k: v for k, v in doc.frontmatter.items() if k != "verified"} | {"status": "draft"}
+    store.wiki_put(path, render(Document(fm, doc.body)), current[1], store.labels)
+    entry = next((p for p in store.wiki_pages() if p["path"] == path), None)
+    if entry is not None:
+        meta = {k: v for k, v in entry.items() if k not in {"_id", "path", "labels"}}
+        store.upsert_wiki_page(path, {**meta, "status": "draft"}, store.labels)
+
+
 def _claim_lines(claims: Sequence[Claim]) -> str:
     lines: list[str] = []
     for c in sorted(claims, key=lambda c: c.course_version):
@@ -186,15 +269,17 @@ def write_page(
             out = _PageOut.model_validate_json(raw)
             resolve = _resolver(store, path)
             if split:
-                # Each part may cite only its own claims' sources (UnknownSource otherwise).
-                main = _drop_evolution(out.body)
-                clean_body(main, current_sources, figures, resolve)
-                parts_out = [_without_defs(main)]
-                if old_claims and out.evolution.strip():
-                    evolution = _drop_evolution(out.evolution.replace(_EVOLUTION, ""))
-                    clean_body(evolution, old_sources, figures, resolve)
-                    parts_out += [_EVOLUTION, _without_defs(evolution)]
-                body = clean_body("\n\n".join(parts_out), sources, figures, resolve)
+                placed = _place_versions(
+                    _without_defs(out.body),
+                    _without_defs(out.evolution),
+                    current_claims,
+                    old_claims,
+                    {s.id for s in current_sources},
+                    {s.id for s in old_sources},
+                )
+                if not _REF.search(placed):
+                    continue  # nothing citable survived: invalid output, retry
+                body = clean_body(placed, sources, figures, resolve)
             else:
                 body = clean_body(out.body, sources, figures, resolve)
             host = HostFields(
@@ -226,6 +311,8 @@ def write_page(
             store.labels,
         )
         return path
+    if current is not None:
+        _demote(store, path, current)
     return None
 
 

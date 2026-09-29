@@ -120,3 +120,10 @@ def test_existing_markers_are_not_shown_to_the_writer() -> None:
     from ingest_worker.steps.wiki import strip_markers
 
     assert strip_markers("規則變嚴格（推論）（推論）。[^a]") == "規則變嚴格。[^a]"
+
+
+def test_split_strips_list_markers_and_keeps_footnotes_with_their_sentence() -> None:
+    body = "## 實務\n- 門檻收緊為 2.5。[^opc_o2-s2] [^opc_o2-s5]\n"
+    [s] = split_sentences(body)
+    assert s.text == "門檻收緊為 2.5。[^opc_o2-s2][^opc_o2-s5]"
+    assert s.refs == ("opc_o2-s2", "opc_o2-s5")

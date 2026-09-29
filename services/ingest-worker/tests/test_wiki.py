@@ -179,15 +179,17 @@ def test_superseded_claims_only_in_the_evolution_section(store: SpaceStore) -> N
     assert "現行" in text and "舊版" in text
 
 
-def test_old_source_in_the_main_body_is_rejected(store: SpaceStore) -> None:
+def test_old_source_in_the_main_body_is_moved_to_the_evolution(store: SpaceStore) -> None:
     old = claim("hotspot MEEF 門檻 3.0", "opc_o1#2", V2023, 3.0)
     new = claim("hotspot MEEF 門檻 2.5", "opc_o2#2", V2025, 2.5)
-    out = {"title": "MEEF", "description": "d", "tags": [],
-           "body": "門檻為 3.0。[^opc_o1-s2]\n", "evolution": ""}  # fmt: skip
+    body = "門檻為 3.0。[^opc_o1-s2] 現行 2.5。[^opc_o2-s2]\n"
+    out = {"title": "MEEF", "description": "d", "tags": [], "body": body, "evolution": ""}
     model = FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False))
-    s = spec(claims=(old.as_superseded(), new))
-    assert write_page(model, RES, store, s, cache_salt=SALT, model_id="m") is None
-    assert len(model.calls) == 2
+    path = write_page(
+        model, RES, store, spec(claims=(old.as_superseded(), new)), cache_salt=SALT, model_id="m"
+    )
+    current, _, evolution = parse(store.wiki_get(path)[0]).body.partition("## 版本演變")  # type: ignore[index,arg-type]
+    assert "3.0" not in current and "門檻為 3.0" in evolution
 
 
 def test_no_evolution_section_without_superseded_claims(store: SpaceStore) -> None:
@@ -197,3 +199,63 @@ def test_no_evolution_section_without_superseded_claims(store: SpaceStore) -> No
     path = write_page(FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False)), RES, store, s,
                       cache_salt=SALT, model_id="m")  # fmt: skip
     assert "版本演變" not in parse(store.wiki_get(path)[0]).body  # type: ignore[index,arg-type]
+
+
+def _two_versions() -> tuple[Claim, Claim]:
+    return (
+        claim("hotspot MEEF 門檻 3.0", "opc_o1#2", V2023, 3.0).as_superseded(),
+        claim("hotspot MEEF 門檻 2.5", "opc_o2#2", V2025, 2.5),
+    )
+
+
+def test_sentences_with_old_only_values_move_to_the_evolution_section(store: SpaceStore) -> None:
+    old, new = _two_versions()
+    out = {
+        "title": "MEEF", "description": "d", "tags": [],
+        "body": "## 本 team 實務\n門檻由 3.0 收緊為 2.5。[^opc_o2-s2] 現行門檻 2.5。[^opc_o2-s2]\n"
+                "舊版門檻是 3.0。[^opc_o1-s2]\n",
+        "evolution": "",
+    }  # fmt: skip
+    path = write_page(FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False)), RES, store,
+                      spec(claims=(old, new)), cache_salt=SALT, model_id="m")  # fmt: skip
+    body = parse(store.wiki_get(path)[0]).body  # type: ignore[index,arg-type]
+    current, _, evolution = body.partition("## 版本演變")
+    assert "現行門檻 2.5" in current and "3.0" not in current
+    assert "門檻由 3.0 收緊為 2.5" in evolution and "舊版門檻是 3.0" in evolution
+
+
+def test_host_writes_the_evolution_when_the_model_leaves_it_empty(store: SpaceStore) -> None:
+    old, new = _two_versions()
+    out = {"title": "MEEF", "description": "d", "tags": [],
+           "body": "現行門檻 2.5。[^opc_o2-s2]\n", "evolution": ""}  # fmt: skip
+    path = write_page(FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False)), RES, store,
+                      spec(claims=(old, new)), cache_salt=SALT, model_id="m")  # fmt: skip
+    evolution = parse(store.wiki_get(path)[0]).body.partition("## 版本演變")[2]  # type: ignore[index,arg-type]
+    assert "2023-09-10" in evolution and "3.0" in evolution and "[^opc_o1-s2]" in evolution
+
+
+def test_unknown_sources_drop_the_sentence_not_the_page(store: SpaceStore) -> None:
+    old, new = _two_versions()
+    body = "現行門檻 2.5。[^opc_o2-s2] CD 實測 3.4。[^cd_d1-s4]\n"
+    out = {"title": "MEEF", "description": "d", "tags": [], "body": body, "evolution": ""}
+    path = write_page(FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False)), RES, store,
+                      spec(claims=(old, new)), cache_salt=SALT, model_id="m")  # fmt: skip
+    assert path is not None
+    body = parse(store.wiki_get(path)[0]).body  # type: ignore[index]
+    assert "2.5" in body and "3.4" not in body and "cd_d1" not in body
+
+
+def test_failed_rewrite_demotes_the_existing_page_to_draft(store: SpaceStore) -> None:
+    path = write_page(
+        FakeModel(lambda _m, _t: reply(GOOD)), RES, store, spec(), cache_salt=SALT, model_id="m"
+    )
+    assert path is not None
+    assert (
+        write_page(
+            FakeModel(lambda _m, _t: "garbage"), RES, store, spec(), cache_salt=SALT, model_id="m"
+        )
+        is None
+    )
+    doc = parse(store.wiki_get(path)[0])  # type: ignore[index]
+    assert doc.frontmatter["status"] == "draft" and "verified" not in doc.frontmatter
+    assert store.wiki_page_by_key("concept:meef")["status"] == "draft"  # type: ignore[index]
