@@ -13,6 +13,8 @@ from kc_models import FakeModel, ImagePart, Message, TextPart
 SCHEMA = Path(__file__).parents[3] / "schema"
 RES = Resources.load(SCHEMA)
 
+SALT = "s" * 32
+
 
 def ctx(prev: str | None = None) -> CourseContext:
     return CourseContext(course_title="課名", previous_point=prev, terms=("MEEF",))
@@ -58,7 +60,7 @@ def slide_and_images(page_id: str, index: int):
 def test_figure_slide_is_classified_then_read_with_guides() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    note = read_slide(model, RES, slide, images, ctx())
+    note = read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     assert note.status == "ok"
     assert [c.tag for c in model.calls] == ["common_c1#4:classify", "common_c1#4:read"]
     system = model.calls[1].messages[0]
@@ -71,7 +73,7 @@ def test_figure_slide_is_classified_then_read_with_guides() -> None:
 def test_text_and_images_stay_interleaved() -> None:
     slide, images = slide_and_images("common_c1", 3)  # text, image, text
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    read_slide(model, RES, slide, images, ctx())
+    read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     user = model.calls[1].messages[-1].parts
     kinds = [type(p).__name__ for p in user]
     first_image = kinds.index("ImagePart")
@@ -83,7 +85,7 @@ def test_text_and_images_stay_interleaved() -> None:
 def test_text_only_slide_is_one_call_with_no_figures() -> None:
     slide, images = slide_and_images("cd_d1", 4)  # the settings table
     model = FakeModel(script("unused", note_json([])))
-    note = read_slide(model, RES, slide, images, ctx())
+    note = read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     assert note.status == "ok"
     assert [c.tag for c in model.calls] == ["cd_d1#5:read"]
 
@@ -91,7 +93,7 @@ def test_text_only_slide_is_one_call_with_no_figures() -> None:
 def test_course_context_is_given() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    read_slide(model, RES, slide, images, ctx(prev="前一張的重點"))
+    read_slide(model, RES, slide, images, ctx(prev="前一張的重點"), cache_salt=SALT)
     assert "課名" in model.calls[1].text() and "前一張的重點" in model.calls[1].text()
 
 
@@ -100,7 +102,7 @@ def test_invalid_output_retried_once_then_ok() -> None:
     model = FakeModel(
         script('{"figure_types": ["meef_plot"]}', ["not json", note_json([meef_fig()])])
     )
-    assert read_slide(model, RES, slide, images, ctx()).status == "ok"
+    assert read_slide(model, RES, slide, images, ctx(), cache_salt=SALT).status == "ok"
     assert [c.tag for c in model.calls].count("common_c1#4:read") == 2
 
 
@@ -119,7 +121,7 @@ def test_invalid_output_retried_once_then_ok() -> None:
 def test_invalid_output_twice_is_failed_not_guessed(bad: str) -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', bad))
-    note = read_slide(model, RES, slide, images, ctx())
+    note = read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     assert note.status == "failed" and note.body is None
     assert note.labels == Labels.of(["sp_common"])
 
@@ -127,13 +129,13 @@ def test_invalid_output_twice_is_failed_not_guessed(bad: str) -> None:
 def test_classification_must_match_figure_count() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot", "sem"]}', note_json([meef_fig()])))
-    assert read_slide(model, RES, slide, images, ctx()).status == "failed"
+    assert read_slide(model, RES, slide, images, ctx(), cache_salt=SALT).status == "failed"
 
 
 def test_labels_come_from_the_slide_not_the_model() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    note = read_slide(model, RES, slide, images, ctx())
+    note = read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     assert note.labels == slide.labels
     assert note.slide_ref == "common_c1#4" and note.page_revision == slide.page_revision
 
@@ -141,7 +143,7 @@ def test_labels_come_from_the_slide_not_the_model() -> None:
 def test_reading_schema_is_constrained_per_figure_type() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    read_slide(model, RES, slide, images, ctx())
+    read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     schema = model.calls[1].json_schema
     assert schema is not None
     figures = schema["properties"]["figures"]
@@ -163,7 +165,7 @@ def test_categorical_reads_are_closed_sets() -> None:
 def test_text_only_schema_allows_no_figures() -> None:
     slide, images = slide_and_images("cd_d1", 4)
     model = FakeModel(script("unused", note_json([])))
-    read_slide(model, RES, slide, images, ctx())
+    read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     schema = model.calls[0].json_schema
     assert schema is not None and schema["properties"]["figures"]["maxItems"] == 0
 
@@ -171,7 +173,7 @@ def test_text_only_schema_allows_no_figures() -> None:
 def test_classification_prompt_describes_each_type() -> None:
     slide, images = slide_and_images("common_c1", 3)
     model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
-    read_slide(model, RES, slide, images, ctx())
+    read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     prompt = model.calls[0].text()
     assert "screenshot" in prompt and "規則表" in prompt  # screenshots of rule tables
     assert "sem" in prompt and "電子顯微鏡" in prompt
@@ -212,8 +214,19 @@ def test_host_normalises_transcribed_figures_and_stray_keys() -> None:
         "confidence": 0.9,
     }
     model = FakeModel(script('{"figure_types": ["screenshot"]}', note_json([fig])))
-    note = read_slide(model, RES, slide, images, ctx())
+    note = read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
     assert note.body is not None
     got = note.body.figures[0]
     assert got.numbers_from_figure is False
     assert got.reads == {"meef_threshold": 2.5}
+
+
+def test_every_model_call_starts_with_the_space_cache_salt() -> None:
+    """Prompts of different spaces diverge at their first tokens, so a shared model server
+    can never serve one space's cached prefix to another."""
+    slide, images = slide_and_images("common_c1", 3)
+    model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
+    read_slide(model, RES, slide, images, ctx(), cache_salt="a1" * 16)
+    for call in model.calls:
+        first = call.messages[0].parts[0]
+        assert isinstance(first, TextPart) and first.text == "[" + "a1" * 16 + "]"

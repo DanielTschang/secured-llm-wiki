@@ -213,6 +213,7 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 
 ## 16. 已知缺口
 
+- **共用模型服務的排隊延遲側通道**（ADR-013）：prefix cache 已以 per-space salt 隔離、gateway 只回傳文字；但一個被入侵的任務仍可從自己呼叫的延遲推知其他 space 的 ingest 活動量（不含內容）。正式環境的模型服務必須滿足 ADR-013 的要求（無對外出口、不記錄內容、cache 依 space 隔離），目前開發用的 host Ollama 沒有機制強制。
 - **M2 判讀品質未達完成標準**：qwen2.5vl:7b 在 `gold/slides.json` 上圖型分類 13/14、數值在容差內 10/21、`numbers_from_figure` 9/10（`make eval`）。抄寫類讀值（截圖、印出的數字）大多正確；需從圖形目測估計的數值（最佳焦距、DOF、MEEF 斜率、向量比例尺）仍不準。後續以更大的模型或圖片放大／切塊改善，並以 `make eval` 驗證。
 - **per-space 內容加密暫時移除**（ADR-012）：MinIO 物件與 MongoDB 欄位目前為明文，能讀取儲存層的人可讀到內容；跨 space 隔離仍由 per-space 憑證強制。**上線前必須恢復，最晚 M6。**
 - **M1–M5 不處理頁面刪除與搬移**：頁面刪除或搬到更嚴格的 space 後，舊內容仍留在原 space wiki。M6 必須完成，否則不得上線。
@@ -223,6 +224,6 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 - **MinIO 的 per-space 憑證是長效靜態金鑰**（M1）：每個 space 一個只能存取自己 bucket 的 MinIO user，金鑰放在 Vault KV 該 space 的路徑下；不像 MongoDB 動態憑證會自動過期。改用短效憑證（例如 STS）需視正式環境的 object store 而定。
 - **開發環境的 Vault 為 dev mode**：資料在記憶體中，Vault 重啟即遺失所有設定、憑證與 transit（HMAC）金鑰，需 `make kind-down && make kind-up` 重建。正式環境改用叢集外 KMS。
 - **同一 space 的 ingest 任務之間沒有隔離**（ADR-011）：每個 space 有自己的 runner，跨 space 的路徑已關閉；但同 space 的任務同 UID，一個任務被入侵可影響同 space 的其他任務。
-- **quarantine 前已產生的衍生物**：頁面在 ingest 之後才被設為受限時，之後不再 ingest，但既有的衍生物（graph 節點、ingest 紀錄，M3 起的 wiki 頁）仍留著；M6 必須一併清除。
+- **quarantine 或搬移前已產生的衍生物**：頁面在 ingest 之後才被設為受限，或被搬到其他 space 時，之後不再於原 space ingest，但既有的衍生物（slide notes、graph 節點、ingest 紀錄，M3 起的 wiki 頁）仍留在原 space；M6 必須一併清除。
 - **手動觸發的 sync 不受 CronJob 的 `concurrencyPolicy` 限制**：兩個 sync 並行時，較舊的抓取可能暫時覆蓋較新的內容（僅同一 space 內，下次 sync 自我修復）；M6 以 per-space lease 處理。
 - **開發環境的基礎元件初始密碼出現在 Helm values**：MongoDB root 與 Neo4j 密碼在 bootstrap 後立即輪替、新值只存在 Vault；MinIO root 未輪替。Helm release（k8s Secret）會保存這些 dev 初始值與 NATS／client secret 的雜湊，不含任何 space 金鑰。

@@ -208,10 +208,23 @@ def test_slide_notes_fenced_and_labelled(
         s.put_slide_note("opc_o2#1", pid, Revision(2), Labels.of([OPC]), "ok", {"point": "again"})
     with pytest.raises(WrongSpace):
         s.put_slide_note("opc_o2#3", pid, Revision(2), Labels.of([OPC, CD]), "ok", {})
-    notes = s.slide_notes(pid)
+    notes = s.slide_notes(pid, Revision(2))
     assert [(n["slide_ref"], n["status"], n["revision"]) for n in notes] == [
         ("opc_o2#1", "ok", 2),
         ("opc_o2#2", "failed", 2),
     ]
     s.put_slide_note("opc_o2#1", pid, Revision(3), Labels.of([OPC]), "ok", {"point": "v3"})
-    assert s.slide_notes(pid)[0]["body"] == {"point": "v3"}
+    assert s.slide_notes(pid, Revision(3))[0]["body"] == {"point": "v3"}
+
+
+def test_slide_notes_only_for_the_requested_revision(
+    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
+) -> None:
+    """A new revision with fewer slides must not surface the old revision's extra notes."""
+    s = store(parts)
+    pid = PageId("opc_o2")
+    for n in (1, 2, 3):
+        s.put_slide_note(f"opc_o2#{n}", pid, Revision(1), Labels.of([OPC]), "ok", {"n": n})
+    for n in (1, 2):
+        s.put_slide_note(f"opc_o2#{n}", pid, Revision(2), Labels.of([OPC]), "ok", {"n": n})
+    assert [n["slide_ref"] for n in s.slide_notes(pid, Revision(2))] == ["opc_o2#1", "opc_o2#2"]

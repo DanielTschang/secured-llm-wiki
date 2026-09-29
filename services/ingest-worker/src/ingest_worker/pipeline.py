@@ -12,7 +12,9 @@ from kc_models import VisionModel
 from kc_store.context import SpaceContext
 from kc_store.space import StaleWrite
 
-__all__ = ["Quarantined", "Stale", "ingest_page"]
+__all__ = ["CACHE_SALT_LABEL", "Quarantined", "Stale", "ingest_page"]
+
+CACHE_SALT_LABEL = b"kc/model-cache-salt/v1"
 
 
 class Stale(Exception):
@@ -44,13 +46,20 @@ def ingest_page(
     ctx.assert_single_space([page.labels, *(s.labels for s in slides)])
     images = {att: ctx.store.read_attachment(page_id, revision, att) for att in page.attachment_ids}
 
+    # Per-space secret prefix for every prompt: no cache sharing across spaces (ADR-013).
+    cache_salt = ctx.store.keyed_digest(CACHE_SALT_LABEL)[:32]
     previous: str | None = None
     terms: list[str] = []
     failed = 0
     try:
         for slide in slides:
             note = read_slide(
-                model, res, slide, images, CourseContext(page.title, previous, tuple(terms))
+                model,
+                res,
+                slide,
+                images,
+                CourseContext(page.title, previous, tuple(terms)),
+                cache_salt=cache_salt,
             )
             ctx.store.put_slide_note(
                 note.slide_ref,

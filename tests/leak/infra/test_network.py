@@ -352,3 +352,53 @@ def test_model_gateway_reaches_only_the_model_server(cluster: str) -> None:
     assert "UPSTREAM OPEN" in out, out  # positive control
     for blocked in ("UPSTREAM_OTHER_PORT", "INTERNET", "MINIO", "VAULT"):
         assert f"{blocked} BLOCKED" in out, out
+
+
+def _model_host(cluster: str) -> str:
+    upstream = kubectl(
+        cluster, "-n", NAMESPACE, "get", "deploy", "kc-model-gateway",
+        "-o", "jsonpath={.spec.template.spec.containers[0].env[0].value}",
+    )  # fmt: skip
+    return upstream.split("//", 1)[1].split(":", 1)[0]
+
+
+def test_ingest_cannot_bypass_the_gateway(cluster: str) -> None:
+    """Tasks reach the model server only through model-gateway (ADR-013)."""
+    host = _model_host(cluster)
+    target = f"{host} 11434"
+    script = (
+        "echo PROBE_RAN; "
+        f"if nc -w 5 {target} </dev/null >/dev/null 2>&1; then echo 'DIRECT OPEN'; "
+        "else echo 'DIRECT BLOCKED'; fi; "
+        "if nc -w 5 kc-model-gateway 8080 </dev/null >/dev/null 2>&1; then echo 'GATEWAY OPEN'; "
+        "else echo 'GATEWAY BLOCKED'; fi"
+    )
+    out = probe(cluster, NAMESPACE, script, {"kc.io/component": "ingest-worker"})
+    assert "PROBE_RAN" in out, out
+    assert "GATEWAY OPEN" in out, out  # positive control
+    assert "DIRECT BLOCKED" in out, out
+
+
+def test_gateway_returns_no_model_server_state(cluster: str) -> None:
+    """Same prompt twice through the gateway (the second is a cache hit on the server): the
+    caller sees only the text, never usage or cached-token counts (ADR-013)."""
+    check = (
+        "import httpx, json\n"
+        "body = {'model': 'qwen2.5vl:7b', 'temperature': 0,"
+        " 'messages': [{'role': 'user', 'content': 'Reply with the single word: pong'}]}\n"
+        "for _ in range(2):\n"
+        "    r = httpx.post('http://kc-model-gateway:8080/v1/chat/completions', json=body,"
+        " timeout=300, trust_env=False)\n"
+        "    print('STATUS', r.status_code)\n"
+        "    print('KEYS', json.dumps(sorted(r.json())))\n"
+        "    print('MESSAGE_KEYS', json.dumps(sorted(r.json()['choices'][0]['message'])))\n"
+        "    print('HAS_USAGE', 'usage' in r.text or 'cached' in r.text)\n"
+    )
+    out = kubectl(
+        cluster, "-n", NAMESPACE, "exec", "deploy/kc-ingest-worker", "-c", "runner-sp-opc",
+        "--", "python", "-c", check,
+    )  # fmt: skip
+    assert out.count("STATUS 200") == 2, out  # positive control: real model calls succeeded
+    assert out.count('KEYS ["choices"]') == 2, out
+    assert out.count('MESSAGE_KEYS ["content"]') == 2, out
+    assert "HAS_USAGE True" not in out, out

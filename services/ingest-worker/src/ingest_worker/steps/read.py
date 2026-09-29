@@ -221,8 +221,13 @@ def _slide_parts(slide: Slide, images: Mapping[AttachmentId, bytes]) -> list[Par
     return parts
 
 
+def _salted(cache_salt: str, *parts: Part) -> Message:
+    """System message that starts with the space's cache salt (see read_slide)."""
+    return Message("system", [TextPart(f"[{cache_salt}]"), *parts])
+
+
 def _classify(
-    model: VisionModel, slide: Slide, images: Mapping[AttachmentId, bytes]
+    model: VisionModel, slide: Slide, images: Mapping[AttachmentId, bytes], cache_salt: str
 ) -> list[str] | None:
     n = len(slide.figures)
     schema = _Classification.model_json_schema()
@@ -233,7 +238,7 @@ def _classify(
         'Output {"figure_types": [...]}.'
     )
     messages = [
-        Message("system", [TextPart(_ROLE)]),
+        _salted(cache_salt, TextPart(_ROLE)),
         Message("user", [*_slide_parts(slide, images), instruction]),
     ]
     for _ in range(2):
@@ -259,9 +264,10 @@ def _read(
     images: Mapping[AttachmentId, bytes],
     ctx: CourseContext,
     types: Sequence[str],
+    cache_salt: str,
 ) -> NoteBody | None:
     guides = [res.guides[t] for t in dict.fromkeys(types) if t in res.guides]
-    system = Message("system", [TextPart(_ROLE), TextPart(res.common), *map(TextPart, guides)])
+    system = _salted(cache_salt, TextPart(_ROLE), TextPart(res.common), *map(TextPart, guides))
     header = [
         f"課名：{ctx.course_title}",
         f"前一張投影片重點：{ctx.previous_point or '（無）'}",
@@ -313,18 +319,24 @@ def read_slide(
     slide: Slide,
     images: Mapping[AttachmentId, bytes],
     ctx: CourseContext,
+    *,
+    cache_salt: str,
 ) -> SlideNote:
+    """`cache_salt` is a per-space secret (derived from the space's HMAC key) placed first in
+    every prompt, so prompts of different spaces never share a prefix on a shared model
+    server: its prefix/KV cache cannot leak one space's prompts to another (ADR-013)."""
+
     def note(body: NoteBody | None) -> SlideNote:
         status: Literal["ok", "failed"] = "ok" if body is not None else "failed"
         return SlideNote(slide.slide_ref, slide.page_revision, slide.labels, status, body)
 
     types: list[str] = []
     if slide.figures:
-        classified = _classify(model, slide, images)
+        classified = _classify(model, slide, images, cache_salt)
         if classified is None:
             return note(None)
         types = classified
-    return note(_read(model, res, slide, images, ctx, types))
+    return note(_read(model, res, slide, images, ctx, types, cache_salt))
 
 
 def as_json(body: NoteBody) -> dict[str, Any]:

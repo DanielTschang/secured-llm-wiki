@@ -91,3 +91,11 @@ def test_fake_model_records_and_scripts() -> None:
     assert fake.calls[0].tag == "opc_o1#2"
     assert "after KESTREL" in fake.calls[0].text()
     assert fake.calls[0].images() == [b"\x89PNG"]
+
+
+def test_default_client_ignores_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    b = OpenAICompatibleBackend(
+        "http://kc-model-gateway:8080/v1", "m", allowed_hosts=frozenset({"kc-model-gateway"})
+    )
+    assert b._http._trust_env is False  # pyright: ignore[reportPrivateUsage]

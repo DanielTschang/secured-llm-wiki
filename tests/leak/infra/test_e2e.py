@@ -169,6 +169,7 @@ def test_each_space_bucket_holds_only_its_own_content(ports: dict[str, int]) -> 
         region_name="us-east-1",
     )
     seen = 0
+    own: dict[str, str] = {}
     for space in SPACES:
         bucket = f"kc-{space.replace('_', '-')}-raw"
         for obj in s3.list_objects_v2(Bucket=bucket).get("Contents", []):
@@ -176,9 +177,13 @@ def test_each_space_bucket_holds_only_its_own_content(ports: dict[str, int]) -> 
             if key.startswith("pages/it_"):
                 continue  # integration-test objects
             body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-            assert_no_foreign_content(body.decode("utf-8", errors="ignore"), space)
+            text = body.decode("utf-8", errors="ignore")
+            assert_no_foreign_content(text, space)
+            own[space] = own.get(space, "") + text
             seen += 1
     assert seen >= 5 + 12  # 5 pages + their attachments
+    # Positive controls: the comparison really sees content (it is plaintext, ADR-012).
+    assert "KESTREL" in own["sp_opc"] and "R-CT-114" in own["sp_cd"]
 
 
 def test_no_content_in_any_pod_log(ports: dict[str, int]) -> None:
@@ -203,11 +208,18 @@ def test_each_space_database_holds_only_its_own_content(ports: dict[str, int]) -
     seen = 0
     for space in SPACES:
         db = space_db(ports, space)
+        dump = ""
         for coll in db.list_collection_names():
             for doc in db[coll].find():
-                assert_no_foreign_content(json_util.dumps(doc, ensure_ascii=False), space)
+                text = json_util.dumps(doc, ensure_ascii=False)
+                assert_no_foreign_content(text, space)
+                dump += text
                 seen += 1
-    assert seen >= 10  # positive control: 5 source pages + 5 ingest runs at least
+        # Positive control: this space's own titles are found in its own dump.
+        for p in load_manifest()["pages"]:
+            if p["space_id"] == space:
+                assert p["title"] in dump, f"{space} dump lacks its own title"
+    assert seen >= 10
 
 
 def test_no_task_token_outlives_its_task(ports: dict[str, int]) -> None:

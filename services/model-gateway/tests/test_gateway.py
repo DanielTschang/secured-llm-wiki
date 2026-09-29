@@ -17,7 +17,20 @@ def upstream(seen: list[httpx.Request], status: int = 200) -> httpx.MockTranspor
     def handler(req: httpx.Request) -> httpx.Response:
         seen.append(req)
         return httpx.Response(
-            status, json={"choices": [{"message": {"content": "R-CT-114 answer"}}]}
+            status,
+            json={
+                "id": "chatcmpl-1",
+                "model": "qwen2.5vl:7b",
+                "system_fingerprint": "fp_ollama",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "R-CT-114 answer"}}
+                ],
+                "usage": {
+                    "prompt_tokens": 1058,
+                    "completion_tokens": 3,
+                    "prompt_tokens_details": {"cached_tokens": 1057},
+                },
+            },
         )
 
     return httpx.MockTransport(handler)
@@ -30,11 +43,13 @@ def client(seen: list[httpx.Request], status: int = 200) -> TestClient:
     return TestClient(create_app(http))
 
 
-def test_forwards_chat_completions_verbatim() -> None:
+def test_forwards_request_and_returns_only_the_content() -> None:
+    """Shared model state (prefix/KV cache) must not be observable: usage, cached-token
+    counts, fingerprints and ids from the model server never reach the caller."""
     seen: list[httpx.Request] = []
     resp = client(seen).post("/v1/chat/completions", json=BODY)
     assert resp.status_code == 200
-    assert resp.json()["choices"][0]["message"]["content"] == "R-CT-114 answer"
+    assert resp.json() == {"choices": [{"message": {"content": "R-CT-114 answer"}}]}
     assert str(seen[0].url) == "http://192.168.65.254:11434/v1/chat/completions"
     assert json.loads(seen[0].content) == BODY
 
@@ -60,3 +75,22 @@ def test_logs_contain_no_content(caplog: pytest.LogCaptureFixture) -> None:
     assert any("model_call" in r.getMessage() for r in caplog.records)
     for secret in ("KESTREL", "R-CT-114", "設定"):
         assert secret not in caplog.text
+
+
+def test_unparseable_upstream_response_is_502() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json at all")
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://192.168.65.254:11434/v1"
+    )
+    resp = TestClient(create_app(http)).post("/v1/chat/completions", json=BODY)
+    assert resp.status_code == 502 and resp.content == b""
+
+
+def test_upstream_client_ignores_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from model_gateway.app import upstream_client
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    assert upstream_client("http://192.168.65.254:11434/v1")._trust_env is False  # pyright: ignore[reportPrivateUsage]

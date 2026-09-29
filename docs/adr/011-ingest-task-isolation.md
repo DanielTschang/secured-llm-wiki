@@ -6,7 +6,7 @@
 
 ## 背景
 
-M1 依 ADR-006 實作 ingest-worker：broker container 持有 ServiceAccount token，為每個任務發出只限單一 space、最長 10 分鐘、任務結束即撤銷的子 token；runner container 沒有 ServiceAccount token，經 unix socket 接收（ID、子 token）並為每個任務啟動新的子行程。子行程先設為 non-dumpable 並回報 ready，runner 才從 stdin 交付 token。
+M1 依 ADR-006 實作 ingest-worker：broker container 持有 ServiceAccount token，為每個任務發出只限單一 space、短時效（M2 起 30 分鐘、上限 45 分鐘，因為一頁的模型呼叫需數分鐘，且資料庫 lease 隨 token 失效）、任務結束即撤銷的子 token；runner container 沒有 ServiceAccount token，經 unix socket 接收（ID、子 token）並為每個任務啟動新的子行程。子行程先設為 non-dumpable 並回報 ready，runner 才從 stdin 交付 token。
 
 M1 的 leak review 指出，在「任務子行程被入侵」的威脅模型下（M2 起子行程會解析 space 成員撰寫的文件與圖片，解析器 RCE 是現實風險），仍有一條跨 space 的路徑：
 
@@ -31,6 +31,7 @@ ADR-006 只宣稱防程式 bug、不防主行程被入侵；它沒有處理「�
 - 同一 space 的任務之間仍同 UID、共用該 space 的 runner；一個任務被入侵可影響同 space 的其他任務，但不跨 space（已列於 architecture §16）。
 - runner container 數量隨 space 數量成長；space 很多時再評估改為每 space 一個 Deployment 或方案 1。
 - 不論選哪一項，broker 發出子 token、任務 stdin 交付、non-dumpable、任務結束撤銷的機制都保留。
+- 所有 space 共用的模型服務是另一條跨 space 路徑（prefix cache、排隊延遲），由 ADR-013 處理。
 
 ## 考慮過的替代方案
 

@@ -96,7 +96,8 @@ class OpenAICompatibleBackend:
             raise ValueError("model endpoint not allowed")
         self._url = base_url.rstrip("/") + "/chat/completions"
         self._model = model
-        self._http = http or httpx.Client(timeout=timeout)
+        # trust_env=False: proxy variables must never divert prompts past the allowlist.
+        self._http = http or httpx.Client(timeout=timeout, trust_env=False)
 
     def __repr__(self) -> str:
         return f"OpenAICompatibleBackend(model={self._model!r})"

@@ -11,6 +11,7 @@ import time
 
 import httpx
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 from kc_obs import configure_logging, get_logger
 
@@ -41,12 +42,25 @@ def create_app(upstream: httpx.AsyncClient) -> FastAPI:
         log.info("model_call", status=resp.status_code, duration_ms=elapsed_ms)
         if resp.status_code != 200:
             return Response(status_code=502)  # never relay the upstream body
-        return Response(resp.content, media_type="application/json")
+        try:
+            content = resp.json()["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise TypeError
+        except Exception as e:
+            log.error("model_call_unparseable", status=resp.status_code, error=e)
+            return Response(status_code=502)
+        # Only the text. usage (incl. cached-token counts), ids and fingerprints describe
+        # shared model-server state and would let one space probe another's prompts.
+        return JSONResponse({"choices": [{"message": {"content": content}}]})
 
     return app
 
 
+def upstream_client(base_url: str) -> httpx.AsyncClient:
+    # trust_env=False: proxy variables must never divert prompts elsewhere.
+    return httpx.AsyncClient(base_url=base_url, timeout=600, trust_env=False)
+
+
 def create_app_from_env() -> FastAPI:
     configure_logging()
-    upstream = httpx.AsyncClient(base_url=os.environ["KC_MODEL_UPSTREAM"], timeout=600)
-    return create_app(upstream)
+    return create_app(upstream_client(os.environ["KC_MODEL_UPSTREAM"]))
