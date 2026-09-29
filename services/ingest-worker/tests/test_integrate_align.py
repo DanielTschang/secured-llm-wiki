@@ -193,3 +193,17 @@ def test_latin_aliases_need_word_boundaries() -> None:
         evidence="PROOF 與 DOFFSET 都不是 DOF 的縮寫",  # only the standalone DOF counts
     )  # fmt: skip
     assert set(got.values()) == {"concept:dof"}
+
+
+def test_figure_readings_count_as_evidence() -> None:
+    from ingest_worker.steps.align import figure_evidence
+
+    ev = figure_evidence(
+        [{"type": "overlay_vector_map", "reads": {"pattern": "magnification", "max_nm": 6.0}},
+         {"type": "schematic", "reads": {"features": ["serif", "hammerhead"]}}]
+    )  # fmt: skip
+    model = FakeModel(lambda _m, _t: '{"mappings": []}')
+    got = align_concepts(
+        model, RES, [], local_concept=lambda _n: "x", cache_salt=SALT, evidence="\n".join(ev)
+    )
+    assert {"concept:hammerhead", "concept:serif"} <= set(got.values())

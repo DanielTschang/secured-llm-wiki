@@ -15,11 +15,26 @@ from ingest_worker.steps.common import ROLE, salted
 from ingest_worker.steps.read import Resources
 from kc_models import Message, ModelError, TextPart, VisionModel
 
-__all__ = ["align_concepts", "normalise"]
+__all__ = ["align_concepts", "figure_evidence", "normalise"]
 
 
 def normalise(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).lower().split())
+
+
+def figure_evidence(figures: list[dict[str, object]]) -> list[str]:
+    """What a slide's figures show, as evidence: the figure type and the reading values
+    (closed-set categories such as `magnification` or `hammerhead`, and keys)."""
+    out: list[str] = []
+    for f in figures:
+        out.append(str(f.get("type", "")))
+        reads = f.get("reads")
+        if isinstance(reads, dict):
+            for key, value in reads.items():  # pyright: ignore[reportUnknownVariableType]
+                out.append(str(key))  # pyright: ignore[reportUnknownArgumentType]
+                values = value if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownVariableType]
+                out += [str(v) for v in values if isinstance(v, str)]  # pyright: ignore[reportUnknownVariableType]
+    return out
 
 
 def _aliases_in(text: str, res: Resources) -> list[tuple[str, str]]:

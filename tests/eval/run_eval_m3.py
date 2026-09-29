@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "support"))
 from testset import GOLD, MANIFEST, load_page
 
 from ingest_worker.pipeline import ingest_page
-from ingest_worker.steps.align import align_concepts
+from ingest_worker.steps.align import align_concepts, figure_evidence
 from ingest_worker.steps.parse import parse_page
 from ingest_worker.steps.read import CourseContext, Resources, read_slide
 from kc_graph import SpaceGraph
@@ -69,6 +69,11 @@ def eval_alignment(vlm: OpenAICompatibleBackend, res: Resources) -> dict[str, An
             evidence = "\n".join(
                 [slide.title, slide.text]
                 + ([note.body.point, *note.body.claims] if note.body else [])
+                + (
+                    figure_evidence([f.model_dump() for f in note.body.figures])
+                    if note.body
+                    else []
+                )
             )
             mapped = align_concepts(
                 vlm, res, names, local_concept=store.local_concept,

@@ -10,7 +10,7 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from ingest_worker.steps.align import align_concepts, normalise
+from ingest_worker.steps.align import align_concepts, figure_evidence, normalise
 from ingest_worker.steps.ground import SlideMaterial, ground_page
 from ingest_worker.steps.integrate import Claim, CourseSlide, integrate_course
 from ingest_worker.steps.parse import Slide, course_id, parse_page
@@ -161,6 +161,7 @@ def build_course(
     # lists), so a concept is kept only if the course actually talks about it.
     for cs in course_slides:
         evidence_parts += [str(cs.note.get("point", "")), *map(str, cs.note.get("claims", []))]
+        evidence_parts += figure_evidence(cs.note.get("figures", []))
     mapping = align_concepts(
         model,
         res,
