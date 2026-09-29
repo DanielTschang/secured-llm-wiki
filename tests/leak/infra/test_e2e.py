@@ -104,6 +104,42 @@ def expected_pages() -> dict[str, set[str]]:
     return out
 
 
+def replay_task(ports: dict[str, int]) -> None:
+    """Force one real ingest task: replay an already-ingested event as the sync user, and
+    wait until the broker reports it finished (it ends as stale, doing no work)."""
+    import asyncio
+
+    import nats
+
+    from kc_events import PageEvent
+
+    http = httpx.Client(
+        base_url=f"http://127.0.0.1:{ports['vault']}/v1/", headers={"X-Vault-Token": ROOT_TOKEN}
+    )
+
+    def finished() -> int:
+        logs = kubectl("-n", NAMESPACE, "logs", "deploy/kc-ingest-worker", "-c", "broker")
+        return logs.count('"task_finished", "space_id": "sp_opc", "page_id": "opc_o1"')
+
+    before = finished()
+    nats_password = http.get("kv/data/nats/sync").json()["data"]["data"]["password"]
+    event = PageEvent.of(space_id="sp_opc", page_id="opc_o1", revision=1)
+
+    async def replay(port: int) -> None:
+        nc = await nats.connect(f"nats://127.0.0.1:{port}", user="sync", password=nats_password)
+        try:
+            await nc.jetstream().publish(event.subject, event.to_bytes(), timeout=5)
+        finally:
+            await nc.close()
+
+    with port_forward("kc-nats", 4222) as nats_port:
+        asyncio.run(replay(nats_port))
+    deadline = time.monotonic() + 120
+    while finished() == before:
+        assert time.monotonic() < deadline, "replayed task did not run"
+        time.sleep(2)
+
+
 def test_sync_then_ingest_then_idempotent_resync(ports: dict[str, int]) -> None:
     expected = expected_pages()
     run_sync()
@@ -144,9 +180,8 @@ def test_raw_objects_are_ciphertext(ports: dict[str, int]) -> None:
     assert seen >= 5 + 12  # 5 pages + their attachments
 
 
-def test_no_content_in_any_pod_log() -> None:
-    if not local_cluster_ok():
-        pytest.skip("local cluster not available")
+def test_no_content_in_any_pod_log(ports: dict[str, int]) -> None:
+    replay_task(ports)  # the positive control below must not depend on test order
     pods = kubectl(
         "-n", NAMESPACE, "get", "pods", "-o", "jsonpath={.items[*].metadata.name}"
     ).split()
@@ -176,14 +211,8 @@ def test_no_content_in_any_database_field(ports: dict[str, int]) -> None:
 
 
 def test_no_task_token_outlives_its_task(ports: dict[str, int]) -> None:
-    """Force a real task (replay an already-ingested event), then check that no
-    single-space token minted since is still valid: the task revoked its own."""
-    import asyncio
-
-    import nats
-
-    from kc_events import PageEvent
-
+    """Force a real task, then check that no single-space token minted since is still
+    valid: the task revoked its own."""
     http = httpx.Client(
         base_url=f"http://127.0.0.1:{ports['vault']}/v1/", headers={"X-Vault-Token": ROOT_TOKEN}
     )
@@ -195,27 +224,7 @@ def test_no_task_token_outlives_its_task(ports: dict[str, int]) -> None:
     ]["creation_time"]
     http.post("auth/token/revoke", json={"token": marker["auth"]["client_token"]})
 
-    def finished() -> int:
-        logs = kubectl("-n", NAMESPACE, "logs", "deploy/kc-ingest-worker", "-c", "broker")
-        return logs.count('"task_finished", "space_id": "sp_opc", "page_id": "opc_o1"')
-
-    before = finished()
-    nats_password = http.get("kv/data/nats/sync").json()["data"]["data"]["password"]
-    event = PageEvent.of(space_id="sp_opc", page_id="opc_o1", revision=1)
-
-    async def replay(port: int) -> None:
-        nc = await nats.connect(f"nats://127.0.0.1:{port}", user="sync", password=nats_password)
-        try:
-            await nc.jetstream().publish(event.subject, event.to_bytes(), timeout=5)
-        finally:
-            await nc.close()
-
-    with port_forward("kc-nats", 4222) as nats_port:
-        asyncio.run(replay(nats_port))
-    deadline = time.monotonic() + 120
-    while finished() == before:  # positive control: a task really ran
-        assert time.monotonic() < deadline, "replayed task did not run"
-        time.sleep(2)
+    replay_task(ports)  # positive control: a task really ran and minted a token
 
     live = []
     for acc in http.request("LIST", "auth/token/accessors").json()["data"]["keys"]:
