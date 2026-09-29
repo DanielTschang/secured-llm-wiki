@@ -96,3 +96,21 @@ def test_other_space_content_never_reaches_model_or_wiki() -> None:
         text = opc.store.wiki_get(p["path"])[0]  # type: ignore[index]
         assert "R-CT-114" not in text and "cd_d1" not in text and "sp_cd" not in text
     assert all("cd_d1" not in t for t in model.embedded)
+
+
+def test_multi_version_claims_split_and_old_versions_superseded() -> None:
+    from datetime import UTC, datetime
+
+    from ingest_worker.steps.course import split_versions
+    from ingest_worker.steps.integrate import Claim
+
+    v23, v25 = datetime(2023, 9, 10, tzinfo=UTC), datetime(2025, 8, 20, tzinfo=UTC)
+    merged = Claim("MEEF 大於 3.0 為 hotspot", 3.0, None, ("MEEF",), ("opc_o1#2", "opc_o2#2"),
+                   (("opc_o1", 1, 2), ("opc_o2", 1, 2)), v25)  # fmt: skip
+    only_old = Claim("舊說法", None, None, (), ("opc_o1#3",), (("opc_o1", 1, 3),), v23)
+    out = split_versions([merged, only_old], {"opc_o1": v23, "opc_o2": v25})
+    assert [(c.source_refs, c.course_version, c.superseded) for c in out] == [
+        (("opc_o1#2",), v23, True),
+        (("opc_o2#2",), v25, False),
+        (("opc_o1#3",), v23, True),
+    ]

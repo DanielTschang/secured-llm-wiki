@@ -97,3 +97,26 @@ def test_only_cited_slides_are_shown_with_their_images(store: SpaceStore) -> Non
     assert "KESTREL-7" not in call.text()
     assert sorted(call.images()) == [b"png-o1", b"png-o2"]
     assert call.messages[0].parts[0].text == f"[{SALT}]"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        (
+            "門檻收緊為 2.5。[^opc_o2-s2][^opc_o2-s5]",
+            "門檻收緊為 2.5（推論）。[^opc_o2-s2][^opc_o2-s5]",
+        ),
+        ("規則變嚴格（推論）。[^opc_o2-s2]", "規則變嚴格（推論）。[^opc_o2-s2]"),  # never twice
+        ("沒有句號[^opc_o2-s2]", "沒有句號（推論）[^opc_o2-s2]"),
+    ],
+)
+def test_inference_marked_once_before_the_footnotes(text: str, want: str) -> None:
+    from ingest_worker.steps.ground import mark_inference
+
+    assert mark_inference(text) == want
+
+
+def test_existing_markers_are_not_shown_to_the_writer() -> None:
+    from ingest_worker.steps.wiki import strip_markers
+
+    assert strip_markers("規則變嚴格（推論）（推論）。[^a]") == "規則變嚴格。[^a]"

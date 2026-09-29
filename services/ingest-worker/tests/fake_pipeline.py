@@ -47,11 +47,21 @@ def fake_pipeline_model(figure_counts: dict[str, int]) -> FakeModel:
         if tag == "course:align":
             return json.dumps({"mappings": []})
         if tag.startswith("wiki:") and tag != "wiki:ground":
-            ref = re.search(r"\[\^([A-Za-z0-9_#.-]+)\]", text)
-            cite = f"[^{ref.group(1)}]" if ref else ""
+            ref_pat = r"\[\^([A-Za-z0-9_#.-]+)\]"
+            current = old = ""
+            if "現行 claims" in text:  # concept/entity pages: current vs superseded split
+                current = text.split("現行 claims", 1)[1].split("舊版 claims", 1)[0]
+                old = text.split("舊版 claims", 1)[1]
+            else:
+                current = text
+            cur = re.search(ref_pat, current)
+            prev = re.search(ref_pat, old)
+            body = f"## 定義\n內容一。[^{cur.group(1)}] 內容二。[^{cur.group(1)}]\n" if cur else ""
+            evolution = f"舊版說法。[^{prev.group(1)}]\n" if prev else ""
+            first = cur or prev
             return json.dumps(
-                {"title": f"頁 {tag} {cite}", "description": "d", "tags": [],
-                 "body": f"## 定義\n內容一。{cite} 內容二。{cite}\n"},
+                {"title": f"頁 {tag} {first.group(1) if first else ''}",
+                 "description": "d", "tags": [], "body": body, "evolution": evolution},
                 ensure_ascii=False,
             )  # fmt: skip
         if tag == "wiki:ground":

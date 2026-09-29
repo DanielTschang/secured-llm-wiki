@@ -7,7 +7,7 @@ was given; anything else is dropped. Provenance and course versions are the host
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal
 
@@ -70,6 +70,11 @@ class Claim:
     source_refs: tuple[str, ...]
     provenance: tuple[tuple[str, int, int], ...]  # (page_id, revision, slide_no)
     course_version: datetime  # newest version among the cited slides
+    # Set by the host: only older versions of its course say this (ADR-008 structure).
+    superseded: bool = False
+
+    def as_superseded(self) -> Claim:
+        return replace(self, superseded=True)
 
 
 @dataclass(frozen=True, slots=True)

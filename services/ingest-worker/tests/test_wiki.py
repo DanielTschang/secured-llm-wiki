@@ -82,7 +82,7 @@ def test_existing_page_is_given_to_the_model_and_updated(store: SpaceStore) -> N
     first = write_page(
         FakeModel(lambda _m, _t: reply(GOOD)), RES, store, spec(), cache_salt=SALT, model_id="m"
     )
-    model = FakeModel(lambda _m, _t: reply(GOOD + "\n補充。[^opc_o2-s2]\n"))
+    model = FakeModel(lambda _m, _t: reply("補充。[^opc_o2-s2]\n" + GOOD))
     again = write_page(model, RES, store, spec(), cache_salt=SALT, model_id="m")
     assert again == first
     assert "MEEF 是光罩誤差放大因子" in model.calls[0].text()  # existing body shown
@@ -94,7 +94,7 @@ def test_versions_and_template_are_given(store: SpaceStore) -> None:
     write_page(model, RES, store, spec(), cache_salt=SALT, model_id="m")
     text = model.calls[0].text()
     assert "2023-09-10" in text and "2025-08-20" in text
-    assert "版本演變" in text and "最新" in text
+    assert "版本演變" in text and "現行" in text
     assert "[^opc_o2-s2]" in text  # source ids offered for citation
 
 
@@ -157,3 +157,43 @@ def test_index_and_log_are_host_generated(store: SpaceStore) -> None:
     write_index_and_log(store, entry="ingest | page opc_o1 rev 2 | 0 pages", when=V2025)
     log = store.wiki_get("log.md")[0]  # type: ignore[index]
     assert log.count("## [2025-08-20] ingest") == 2  # append-only
+
+
+def test_superseded_claims_only_in_the_evolution_section(store: SpaceStore) -> None:
+    old = claim("hotspot MEEF 門檻 3.0", "opc_o1#2", V2023, 3.0)
+    new = claim("hotspot MEEF 門檻 2.5", "opc_o2#2", V2025, 2.5)
+    s = spec(claims=(old.as_superseded(), new))
+    out = {
+        "title": "MEEF", "description": "d", "tags": [],
+        "body": "## 本 team 實務\n現行門檻為 2.5。[^opc_o2-s2]\n",
+        "evolution": "2023 版門檻為 3.0。[^opc_o1-s2]\n",
+    }  # fmt: skip
+    model = FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False))
+    path = write_page(model, RES, store, s, cache_salt=SALT, model_id="m")
+    assert path is not None
+    body = parse(store.wiki_get(path)[0]).body  # type: ignore[index]
+    current, _, evolution = body.partition("## 版本演變")
+    assert "2.5" in current and "3.0" not in current
+    assert "3.0" in evolution
+    text = model.calls[0].text()
+    assert "現行" in text and "舊版" in text
+
+
+def test_old_source_in_the_main_body_is_rejected(store: SpaceStore) -> None:
+    old = claim("hotspot MEEF 門檻 3.0", "opc_o1#2", V2023, 3.0)
+    new = claim("hotspot MEEF 門檻 2.5", "opc_o2#2", V2025, 2.5)
+    out = {"title": "MEEF", "description": "d", "tags": [],
+           "body": "門檻為 3.0。[^opc_o1-s2]\n", "evolution": ""}  # fmt: skip
+    model = FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False))
+    s = spec(claims=(old.as_superseded(), new))
+    assert write_page(model, RES, store, s, cache_salt=SALT, model_id="m") is None
+    assert len(model.calls) == 2
+
+
+def test_no_evolution_section_without_superseded_claims(store: SpaceStore) -> None:
+    s = spec(claims=(claim("hotspot MEEF 門檻 2.5", "opc_o2#2", V2025, 2.5),))
+    body = "門檻 2.5。[^opc_o2-s2]\n## 版本演變\n亂寫。[^opc_o2-s2]\n"
+    out = {"title": "MEEF", "description": "d", "tags": [], "body": body, "evolution": ""}
+    path = write_page(FakeModel(lambda _m, _t: json.dumps(out, ensure_ascii=False)), RES, store, s,
+                      cache_salt=SALT, model_id="m")  # fmt: skip
+    assert "版本演變" not in parse(store.wiki_get(path)[0]).body  # type: ignore[index,arg-type]

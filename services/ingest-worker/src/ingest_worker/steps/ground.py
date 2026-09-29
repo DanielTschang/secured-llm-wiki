@@ -20,7 +20,15 @@ from kc_models import ImagePart, Message, ModelError, Part, TextPart, VisionMode
 from kc_okf import Document, HostFields, Source, build_frontmatter, clean_body, parse, render
 from kc_store.space import SpaceStore
 
-__all__ = ["VERIFIER", "Sentence", "SlideMaterial", "ground_page", "split_sentences"]
+__all__ = [
+    "INFERENCE",
+    "VERIFIER",
+    "Sentence",
+    "SlideMaterial",
+    "ground_page",
+    "mark_inference",
+    "split_sentences",
+]
 
 VERIFIER = "kc-grounding/1"
 _REF = re.compile(r"\[\^([A-Za-z0-9_#.-]+)\]")
@@ -74,11 +82,18 @@ class _Verdicts(BaseModel):
     verdicts: list[_Verdict]
 
 
-def _mark_inference(text: str) -> str:
-    m = re.match(r"(.*?)([。！？!?]?)((?:\[\^[^\]]+\])*)$", text)
+INFERENCE = "（推論）"
+_TAIL = re.compile(r"([。！？!?]?)((?:\[\^[^\]]+\])*)$")
+
+
+def mark_inference(text: str) -> str:
+    """Mark once, before the sentence's final punctuation and footnotes."""
+    if INFERENCE in text:
+        return text
+    m = _TAIL.search(text)
     if m is None:  # the pattern matches any string; kept for the type checker
-        return text + "（推論）"
-    return f"{m.group(1)}（推論）{m.group(2)}{m.group(3)}"
+        return text + INFERENCE
+    return f"{text[: m.start()]}{INFERENCE}{m.group(1)}{m.group(2)}"
 
 
 def _rebuild(body: str, keep: dict[int, list[str]]) -> str:
@@ -170,7 +185,7 @@ def ground_page(
         v = verdicts.get(i + 1, "unsupported")
         if v == "unsupported" or any(r not in material for r in s.refs):
             continue
-        keep.setdefault(s.line, []).append(_mark_inference(s.text) if v == "inference" else s.text)
+        keep.setdefault(s.line, []).append(mark_inference(s.text) if v == "inference" else s.text)
 
     all_sources = tuple(Source(**s) for s in fm["sources"])
     kept_refs = {r for texts in keep.values() for t in texts for r in _REF.findall(t)}

@@ -34,7 +34,7 @@ from kc_store.space import SpaceStore
 __all__ = ["PageSpec", "source_id", "write_index_and_log", "write_page"]
 
 TEMPLATES = {
-    "concept": "## 定義、## 原理、## 本 team 實務、## 常見問題、## 版本演變、## 相關概念",
+    "concept": "## 定義、## 原理、## 本 team 實務、## 常見問題、## 相關概念",
     "entity": "## 概要、## 用途、## 版本與設定、## 相關概念",
     "course": "## 課程概要、## 重點、## 涵蓋概念",
     "synthesis": "## 比較、## 差異與原因、## 相關概念",
@@ -60,6 +60,12 @@ class _PageOut(BaseModel):
     description: str
     tags: list[str]
     body: str
+    evolution: str = ""
+
+
+def strip_markers(text: str) -> str:
+    """Grounding's inference markers are the host's; the writer never sees or copies them."""
+    return text.replace("（推論）", "")
 
 
 def source_id(page_id: str, slide_no: int) -> str:
@@ -77,6 +83,27 @@ def _sources(store: SpaceStore, claims: Sequence[Claim]) -> tuple[Source, ...]:
                 c.course_version.isoformat().replace("+00:00", "Z"),
             )
     return tuple(out.values())
+
+
+_EVOLUTION = "## 版本演變"
+_SPLIT_KINDS = frozenset({"concept", "entity"})
+
+
+def _drop_evolution(body: str) -> str:
+    """The version-history section is assembled by the host, never taken from `body`:
+    drop that section (up to the next heading), keep everything else."""
+    out: list[str] = []
+    skipping = False
+    for line in body.split("\n"):
+        if line.startswith("## "):
+            skipping = line.strip() == _EVOLUTION
+        if not skipping:
+            out.append(line)
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _without_defs(body: str) -> str:
+    return "\n".join(line for line in body.split("\n") if not line.startswith("[^")).rstrip()
 
 
 def _claim_lines(claims: Sequence[Claim]) -> str:
@@ -111,16 +138,22 @@ def write_page(
     entry = store.wiki_page_by_key(spec.key)
     path = entry["path"] if entry else page_path(spec.kind, new_ulid())
     current = store.wiki_get(path)
-    existing_body = parse(current[0]).body if current else ""
+    existing_body = strip_markers(parse(current[0]).body) if current else ""
     index = store.wiki_get("index.md")
     sources = _sources(store, spec.claims)
     figures = frozenset(att for att, _ in spec.figures)
+    current_claims = [c for c in spec.claims if not c.superseded]
+    old_claims = [c for c in spec.claims if c.superseded]
+    split = spec.kind in _SPLIT_KINDS
+    current_sources = _sources(store, current_claims) if split else sources
+    old_sources = _sources(store, old_claims)
 
     rules = (
         "撰寫或修改一個 space wiki 頁。規則：\n"
         "- 只根據提供的 claims 撰寫；每一句都要以註腳 [^來源代號] 引用支持它的來源，"
         "只能使用 claims 旁列出的來源代號。\n"
-        "- 同一件事有多個課程版本時，以**最新**版本為現行內容，較舊的說法寫在「版本演變」段落。\n"
+        "- body 只寫**現行** claims；**舊版** claims 只能寫在 evolution 欄位（版本演變），"
+        "說明舊版的說法與改變。沒有舊版 claims 時 evolution 留空。\n"
         f"- 段落結構：{TEMPLATES[spec.kind]}（沒有內容的段落可省略）。\n"
         "- 提到其他頁面時用 [[頁面標題]]；可嵌入下列圖片之一：![說明](kc-figure://<附件代號>)。\n"
         "- 只輸出 title、description（一句話）、tags 與 body。"
@@ -129,8 +162,18 @@ def write_page(
         TextPart(f"頁面類型：{_KIND_TITLES[spec.kind]}；主題：{spec.subject}"),
         TextPart("本 space 的 index：\n" + (index[0] if index else "（尚無頁面）")),
         TextPart("目前的頁面內文：\n" + (existing_body or "（新頁面）")),
-        TextPart("claims：\n" + _claim_lines(spec.claims)),
     ]
+    if split:
+        parts.append(
+            TextPart("現行 claims（寫在 body）：\n" + (_claim_lines(current_claims) or "（無）"))
+        )
+        parts.append(
+            TextPart(
+                "舊版 claims（只能寫在 evolution）：\n" + (_claim_lines(old_claims) or "（無）")
+            )
+        )
+    else:
+        parts.append(TextPart("claims：\n" + _claim_lines(spec.claims)))
     if spec.figures:
         figs = "\n".join(f"- kc-figure://{att}（投影片 {ref}）" for att, ref in spec.figures)
         parts.append(TextPart("可用的圖片：\n" + figs))
@@ -141,7 +184,19 @@ def write_page(
         try:
             raw = model.chat(messages, json_schema=schema, tag=f"wiki:{spec.kind}")
             out = _PageOut.model_validate_json(raw)
-            body = clean_body(out.body, sources, figures, _resolver(store, path))
+            resolve = _resolver(store, path)
+            if split:
+                # Each part may cite only its own claims' sources (UnknownSource otherwise).
+                main = _drop_evolution(out.body)
+                clean_body(main, current_sources, figures, resolve)
+                parts_out = [_without_defs(main)]
+                if old_claims and out.evolution.strip():
+                    evolution = _drop_evolution(out.evolution.replace(_EVOLUTION, ""))
+                    clean_body(evolution, old_sources, figures, resolve)
+                    parts_out += [_EVOLUTION, _without_defs(evolution)]
+                body = clean_body("\n\n".join(parts_out), sources, figures, resolve)
+            else:
+                body = clean_body(out.body, sources, figures, resolve)
             host = HostFields(
                 type=spec.kind,
                 sources=sources,

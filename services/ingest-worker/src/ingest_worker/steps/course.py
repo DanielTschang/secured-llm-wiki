@@ -7,6 +7,7 @@ index.md/log.md -> rebuild this space's search index and wiki graph.
 
 import re
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -94,6 +95,34 @@ class _Material(Mapping[str, SlideMaterial]):
         return 0
 
 
+def split_versions(claims: list[Claim], versions: dict[str, datetime]) -> list[Claim]:
+    """One claim per course version it cites, and old versions marked superseded.
+
+    Which statement is current is decided by the host from the platform's version dates,
+    not by the model: a claim cited only by pages older than the course's newest page is
+    superseded. A claim the model merged across versions is split so each version's copy
+    is judged (and grounded) separately."""
+    newest = max(versions.values()) if versions else None
+    out: list[Claim] = []
+    for c in claims:
+        by_version: dict[datetime, list[tuple[str, int, int]]] = {}
+        for prov in c.provenance:
+            by_version.setdefault(versions.get(prov[0], c.course_version), []).append(prov)
+        for when in sorted(by_version):
+            provs = tuple(by_version[when])
+            refs = tuple(f"{p}#{n}" for p, _, n in provs)
+            out.append(
+                replace(
+                    c,
+                    source_refs=refs,
+                    provenance=provs,
+                    course_version=when,
+                    superseded=newest is not None and when < newest,
+                )
+            )
+    return out
+
+
 def _claim_from_doc(d: dict[str, Any]) -> Claim:
     return Claim(
         text=d["text"],
@@ -103,6 +132,7 @@ def _claim_from_doc(d: dict[str, Any]) -> Claim:
         source_refs=tuple(d.get("source_refs", [])),
         provenance=tuple((p["page_id"], p["revision"], p["slide_no"]) for p in d["provenance"]),
         course_version=datetime.fromisoformat(d["course_version"]),
+        superseded=bool(d.get("superseded", False)),
     )
 
 
@@ -183,8 +213,9 @@ def build_course(
                     {"page_id": p, "revision": r, "slide_no": n} for p, r, n in c.provenance
                 ],
                 "course_version": c.course_version.isoformat(),
+                "superseded": c.superseded,
             }
-            for c in digest.claims
+            for c in split_versions(list(digest.claims), {p.page_id: p.updated_date for p in pages})
         ],
         labels,
     )
