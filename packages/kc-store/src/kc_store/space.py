@@ -253,6 +253,11 @@ class SpaceStore:
         found = self._docs.find("wiki_pages", {"concept_id": concept_id})
         return {"path": found[0]["_id"], **found[0]} if found else None
 
+    def wiki_page_by_key(self, key: str) -> dict[str, Any] | None:
+        """The page for a subject key (a concept ID, or entity/course/synthesis keys)."""
+        found = self._docs.find("wiki_pages", {"key": key})
+        return {"path": found[0]["_id"], **found[0]} if found else None
+
     # --- claims (ingest step 3) -----------------------------------------------------
 
     def replace_course_claims(

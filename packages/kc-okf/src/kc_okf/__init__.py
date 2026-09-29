@@ -123,12 +123,12 @@ def build_frontmatter(host: HostFields, llm: Mapping[str, Any]) -> dict[str, Any
         ],
         "generated": {"by": host.generated_by, "at": host.generated_at},
         "status": host.status,
-        "kc_labels": sorted(host.kc_labels),
+        "kc_labels": sorted(str(label) for label in host.kc_labels),  # plain str for YAML
     }
     if host.verified_by:
         fm["verified"] = {"by": host.verified_by, "at": host.verified_at}
     if host.kc_concept:
-        fm["kc_concept"] = host.kc_concept
+        fm["kc_concept"] = str(host.kc_concept)
     return fm
 
 
