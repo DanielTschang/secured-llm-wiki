@@ -37,6 +37,7 @@ integration:
 # Ingest steps 1-2 against gold/slides.json, using the host's model server (Ollama).
 eval:
 	uv run python tests/eval/run_eval.py
+	uv run python tests/eval/run_eval_m3.py
 
 lint:
 	uv run ruff check .
