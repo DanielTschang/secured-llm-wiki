@@ -40,3 +40,9 @@ class MongoDocs:
 
     def upsert(self, collection: str, doc_id: str, doc: Doc) -> None:
         self._db[collection].replace_one({"_id": doc_id}, {**doc, "_id": doc_id}, upsert=True)
+
+    def find(self, collection: str, equals: Doc) -> list[Doc]:
+        return list(self._db[collection].find(equals).sort("_id", 1))
+
+    def delete(self, collection: str, doc_id: str) -> None:
+        self._db[collection].delete_one({"_id": doc_id})

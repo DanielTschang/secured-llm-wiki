@@ -61,6 +61,20 @@ class MemoryDocs:
     def upsert(self, collection: str, doc_id: str, doc: dict[str, object]) -> None:
         self._data.setdefault(collection, {})[doc_id] = dict(doc)
 
+    def find(self, collection: str, equals: dict[str, object]) -> list[dict[str, object]]:
+        def match(doc: dict[str, object]) -> bool:
+            for k, v in equals.items():
+                got = doc.get(k)
+                if got != v and not (isinstance(got, list) and v in got):
+                    return False
+            return True
+
+        coll = self._data.get(collection, {})
+        return [{"_id": k, **d} for k, d in sorted(coll.items()) if match(d)]
+
+    def delete(self, collection: str, doc_id: str) -> None:
+        self._data.get(collection, {}).pop(doc_id, None)
+
 
 class MemoryBlobs:
     """In-memory BlobStore; objects are write-once like S3Blobs with If-None-Match."""
@@ -79,3 +93,16 @@ class MemoryBlobs:
 
     def get(self, key: str) -> bytes | None:
         return self._data.get(key)
+
+    def get_with_etag(self, key: str) -> tuple[bytes, str] | None:
+        data = self._data.get(key)
+        return None if data is None else (data, hashlib.sha256(data).hexdigest())
+
+    def put_if_match(self, key: str, data: bytes, etag: str | None) -> bool:
+        current = self.get_with_etag(key)
+        if (etag is None and current is not None) or (
+            etag is not None and (current is None or current[1] != etag)
+        ):
+            return False
+        self._data[key] = data
+        return True

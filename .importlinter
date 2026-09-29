@@ -8,6 +8,7 @@ root_packages =
     kc_store
     kc_graph
     kc_models
+    kc_okf
     mock_platform
     model_gateway
     sync

@@ -164,3 +164,30 @@ def test_task_token_is_single_space(ports: dict[str, int]) -> None:
     # Positive control: its own space works.
     v.database_creds(OPC)
     v.hmac(OPC, "AAAA")
+
+
+def test_wiki_etag_fencing_at_minio(opc: SpaceContext) -> None:
+    """ADR-010 point 8: wiki pages are replaced only with the ETag the writer read."""
+    from kc_okf import new_ulid
+
+    path = f"concepts/{new_ulid()}.md"
+    opc.store.wiki_put(path, "v1", None, opc.labels)
+    got = opc.store.wiki_get(path)
+    assert got is not None and got[0] == "v1"
+    with pytest.raises(StaleWrite):
+        opc.store.wiki_put(path, "again", None, opc.labels)
+    opc.store.wiki_put(path, "v2", got[1], opc.labels)
+    with pytest.raises(StaleWrite):
+        opc.store.wiki_put(path, "v3", got[1], opc.labels)  # stale ETag
+    assert opc.store.wiki_get(path)[0] == "v2"  # type: ignore[index]
+
+
+def test_find_and_delete_at_mongo(opc: SpaceContext) -> None:
+    from kc_labels import Labels
+
+    course = f"it_course_{uuid.uuid4().hex[:8]}"
+    c = {"text": "t", "concept_ids": ["concept:meef"], "provenance": []}
+    opc.store.replace_course_claims(course, [c, c], Labels.of([OPC]))
+    assert len(opc.store.course_claims(course)) == 2
+    opc.store.replace_course_claims(course, [c], Labels.of([OPC]))
+    assert len(opc.store.course_claims(course)) == 1

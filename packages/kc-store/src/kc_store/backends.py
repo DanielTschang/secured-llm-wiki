@@ -21,6 +21,13 @@ class DocStore(Protocol):
 
     def upsert(self, collection: str, doc_id: str, doc: Doc) -> None: ...
 
+    def find(self, collection: str, equals: Doc) -> list[Doc]:
+        """Documents whose fields equal `equals` (a field holding a list matches if it
+        contains the value), in _id order."""
+        ...
+
+    def delete(self, collection: str, doc_id: str) -> None: ...
+
 
 class BlobStore(Protocol):
     def put_if_absent(self, key: str, data: bytes) -> bool:
@@ -28,3 +35,9 @@ class BlobStore(Protocol):
         ...
 
     def get(self, key: str) -> bytes | None: ...
+
+    def get_with_etag(self, key: str) -> tuple[bytes, str] | None: ...
+
+    def put_if_match(self, key: str, data: bytes, etag: str | None) -> bool:
+        """Write if the object's current ETag is `etag` (None: only if it does not exist)."""
+        ...

@@ -11,6 +11,7 @@ members = [
     "kc-labels",
     "kc-models",
     "kc-obs",
+    "kc-okf",
     "kc-platform",
     "kc-store",
     "knowledge-center",
@@ -662,6 +663,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "kc-okf"
+version = "0.1.0"
+source = { editable = "packages/kc-okf" }
+dependencies = [
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
+
+[[package]]
 name = "kc-platform"
 version = "0.1.0"
 source = { editable = "packages/kc-platform" }
@@ -689,6 +701,7 @@ dependencies = [
     { name = "kc-graph" },
     { name = "kc-ids" },
     { name = "kc-labels" },
+    { name = "kc-okf" },
     { name = "pymongo" },
 ]
 
@@ -700,6 +713,7 @@ requires-dist = [
     { name = "kc-graph", editable = "packages/kc-graph" },
     { name = "kc-ids", editable = "packages/kc-ids" },
     { name = "kc-labels", editable = "packages/kc-labels" },
+    { name = "kc-okf", editable = "packages/kc-okf" },
     { name = "pymongo", specifier = ">=4.10" },
 ]
 
@@ -722,6 +736,7 @@ dev = [
     { name = "kc-labels" },
     { name = "kc-models" },
     { name = "kc-obs" },
+    { name = "kc-okf" },
     { name = "kc-platform" },
     { name = "kc-store" },
     { name = "minio" },
@@ -752,6 +767,7 @@ dev = [
     { name = "kc-labels", editable = "packages/kc-labels" },
     { name = "kc-models", editable = "packages/kc-models" },
     { name = "kc-obs", editable = "packages/kc-obs" },
+    { name = "kc-okf", editable = "packages/kc-okf" },
     { name = "kc-platform", editable = "packages/kc-platform" },
     { name = "kc-store", editable = "packages/kc-store" },
     { name = "minio", specifier = ">=7.2.15" },

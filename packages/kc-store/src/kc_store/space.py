@@ -11,6 +11,7 @@ from typing import Any
 
 from kc_ids import AttachmentId, PageId, Revision, attachment_id_from_digest
 from kc_labels import Labels, SpaceId
+from kc_okf import is_bundle_path, new_ulid
 from kc_store.backends import BlobStore, DocStore
 from kc_store.keys import KeyService
 
@@ -218,6 +219,87 @@ class SpaceStore:
             n += 1
         return out
 
+    # --- course pages --------------------------------------------------------------
+
+    def list_source_pages(self, parent_id: str) -> list[SourcePage]:
+        """This space's pages of one course (same platform parent), in page-id order."""
+        docs = self._docs.find("source_pages", {"parent_id": parent_id})
+        return [p for d in docs if (p := self.get_source_page(PageId(d["_id"]))) is not None]
+
+    # --- wiki bundle (OKF v0.2, ADR-010): wiki/<path> in the space's raw bucket ----------
+
+    def wiki_get(self, path: str) -> tuple[str, str] | None:
+        _check_bundle_path(path)
+        got = self._blobs.get_with_etag(f"wiki/{path}")
+        return None if got is None else (got[0].decode(), got[1])
+
+    def wiki_put(self, path: str, text: str, etag: str | None, labels: Labels) -> None:
+        """Create (etag None) or replace the object with this exact ETag; else StaleWrite."""
+        _check_bundle_path(path)
+        self.check_labels(labels)
+        if not self._blobs.put_if_match(f"wiki/{path}", text.encode(), etag):
+            raise StaleWrite
+
+    def upsert_wiki_page(self, path: str, meta: dict[str, Any], labels: Labels) -> None:
+        """Index entry for a bundle page (rebuildable from the bundle)."""
+        _check_bundle_path(path)
+        self.check_labels(labels)
+        self._docs.upsert("wiki_pages", path, {**meta, "labels": sorted(labels.spaces)})
+
+    def wiki_pages(self) -> list[dict[str, Any]]:
+        return [{"path": d["_id"], **d} for d in self._docs.find("wiki_pages", {})]
+
+    def wiki_page_for_concept(self, concept_id: str) -> dict[str, Any] | None:
+        found = self._docs.find("wiki_pages", {"concept_id": concept_id})
+        return {"path": found[0]["_id"], **found[0]} if found else None
+
+    # --- claims (ingest step 3) -----------------------------------------------------
+
+    def replace_course_claims(
+        self, course_id: str, claims: list[dict[str, Any]], labels: Labels
+    ) -> None:
+        """A course's claims are rebuilt by each course integration (same-space ingest is
+        sequential, ADR-006); IDs are positional within the course."""
+        self.check_labels(labels)
+        prefix = self.keyed_digest(course_id.encode())[:16]
+        for old in self._docs.find("claims", {"course_key": prefix}):
+            self._docs.delete("claims", old["_id"])
+        for n, c in enumerate(claims):
+            doc = {**c, "course_key": prefix, "labels": sorted(labels.spaces)}
+            self._docs.upsert("claims", f"clm_{prefix}_{n:04d}", doc)
+
+    def course_claims(self, course_id: str) -> list[dict[str, Any]]:
+        prefix = self.keyed_digest(course_id.encode())[:16]
+        return [self._checked(d) for d in self._docs.find("claims", {"course_key": prefix})]
+
+    def claims_for_concept(self, concept_id: str) -> list[dict[str, Any]]:
+        return [self._checked(d) for d in self._docs.find("claims", {"concept_ids": concept_id})]
+
+    def _checked(self, doc: dict[str, Any]) -> dict[str, Any]:
+        self.check_labels(Labels.of(doc["labels"]))
+        return doc
+
+    # --- local concepts (ingest step 4) -------------------------------------------
+
+    def local_concept(self, name: str) -> str:
+        """The space's local concept for a name that is not in the canonical glossary;
+        reused for the same normalised name. The ID carries no name (invariant 7)."""
+        key = "lc_" + self.keyed_digest(_normalise(name).encode())[:24]
+        doc = self._docs.get("local_concepts", key)
+        if doc is not None:
+            return str(doc["concept_id"])
+        concept_id = f"local:{self.space_id}:{new_ulid()}"
+        self._docs.upsert(
+            "local_concepts",
+            key,
+            {"concept_id": concept_id, "name": name.strip(), "labels": sorted(self.labels.spaces)},
+        )
+        return concept_id
+
+    def local_concept_name(self, concept_id: str) -> str | None:
+        found = self._docs.find("local_concepts", {"concept_id": concept_id})
+        return str(found[0]["name"]) if found else None
+
     # --- quarantine (page-level restrictions, ADR-001) -------------------------------
 
     def quarantine(self, page_id: PageId) -> None:
@@ -225,3 +307,14 @@ class SpaceStore:
 
     def is_quarantined(self, page_id: PageId) -> bool:
         return self._docs.get("quarantine", page_id) is not None
+
+
+def _check_bundle_path(path: str) -> None:
+    if not is_bundle_path(path):
+        raise ValueError("not a bundle path")
+
+
+def _normalise(name: str) -> str:
+    import unicodedata
+
+    return " ".join(unicodedata.normalize("NFKC", name).lower().split())
