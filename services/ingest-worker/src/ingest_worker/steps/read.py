@@ -8,6 +8,7 @@ is retried once, then the note is recorded as failed (never guessed).
 """
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -325,6 +326,8 @@ def read_slide(
     """`cache_salt` is a per-space secret (derived from the space's HMAC key) placed first in
     every prompt, so prompts of different spaces never share a prefix on a shared model
     server: its prefix/KV cache cannot leak one space's prompts to another (ADR-013)."""
+    if re.fullmatch(r"[0-9a-f]{32}", cache_salt) is None:
+        raise ValueError("cache salt must be 32 lowercase hex characters")
 
     def note(body: NoteBody | None) -> SlideNote:
         status: Literal["ok", "failed"] = "ok" if body is not None else "failed"

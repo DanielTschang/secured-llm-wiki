@@ -29,6 +29,14 @@ M2 的 leak review 指出兩條跨 space 路徑，前提都是「某個 space �
 - gateway 的回應格式固定為 `{"choices": [{"message": {"content": "..."}}]}`；需要 token 計數等資訊時只能在 gateway 內以數值記錄，不回傳給呼叫者。
 - 每次模型呼叫多一小段前綴；同一 space 內的快取效果不受影響。
 - 開發環境的 Ollama 在 host 上執行，不受 `deploy/` 控制；上述正式環境要求目前沒有機制強制，已列於 architecture §16。
+- **其他模型呼叫者**：M4／M5 的查詢與 view 也會呼叫模型，且 prompt 含多個 space 的內容。每個呼叫者都必須在 prompt 開頭加上 salt，並由有效標籤集合推導（例如依序以每個 space 的 HMAC 金鑰串接計算），使只持有部分 space 金鑰的人算不出來。
+- **圖片 embedding 快取**：開發用的 Ollama 實測沒有跨請求的圖片 embedding 快取；正式環境的推論服務若有，也必須依 space 隔離或關閉。
+
+## 剩餘風險
+
+- 排隊延遲（見決策 3）。
+- **salt 固定不輪替**：被入侵的任務理論上可用逐 token 的計時差累積猜測其他 space 的 salt。實測每個 token 的訊號只有數毫秒、請求耗時雜訊數百毫秒，對 128 bit 的 salt 實務上不可行；需要時可把標籤版本（`kc/model-cache-salt/v1`）改為可輪替。
+- **與附件 ID 共用 HMAC 金鑰、未做 domain separation**：若某附件的 bytes 恰好等於 salt 的標籤，其附件 ID 會等於 salt 的前半段。附件 ID 只在該 space 範圍與管理者可見，不構成跨 space 洩漏；日後若要改為每種用途加前綴，需一併遷移既有附件 ID。
 
 ## 考慮過的替代方案
 

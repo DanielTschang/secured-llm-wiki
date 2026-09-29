@@ -13,7 +13,7 @@ from tests.leak.harness import Canary
 SCHEMA = Path(__file__).parents[2] / "schema"
 CD_SLIDE_4 = "量測 13 個 mask CD 偏移條件後擬合"
 
-SALT = "s" * 32
+SALT = "5a" * 16
 
 
 def test_opc_slides_never_show_cd_content_to_the_model(canaries: list[Canary]) -> None:
@@ -25,7 +25,7 @@ def test_opc_slides_never_show_cd_content_to_the_model(canaries: list[Canary]) -
         lambda _m, tag: '{"figure_types": ["other"]}' if tag.endswith("classify") else note
     )
     for slide in parse_page(page, md):
-        read_slide(model, res, slide, blobs, CourseContext("c", None, ()), cache_salt="s" * 32)
+        read_slide(model, res, slide, blobs, CourseContext("c", None, ()), cache_salt="5a" * 16)
     assert model.calls, "positive control: the model was called"
     for call in model.calls:
         text = call.text()

@@ -13,7 +13,7 @@ from kc_models import FakeModel, ImagePart, Message, TextPart
 SCHEMA = Path(__file__).parents[3] / "schema"
 RES = Resources.load(SCHEMA)
 
-SALT = "s" * 32
+SALT = "5a" * 16
 
 
 def ctx(prev: str | None = None) -> CourseContext:
@@ -230,3 +230,12 @@ def test_every_model_call_starts_with_the_space_cache_salt() -> None:
     for call in model.calls:
         first = call.messages[0].parts[0]
         assert isinstance(first, TextPart) and first.text == "[" + "a1" * 16 + "]"
+
+
+@pytest.mark.parametrize("salt", ["", "short", "g" * 32, "A" * 32])
+def test_cache_salt_must_be_32_lowercase_hex(salt: str) -> None:
+    slide, images = slide_and_images("common_c1", 3)
+    model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
+    with pytest.raises(ValueError, match="cache salt"):
+        read_slide(model, RES, slide, images, ctx(), cache_salt=salt)
+    assert model.calls == []

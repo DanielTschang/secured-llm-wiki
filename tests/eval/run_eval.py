@@ -5,6 +5,7 @@ with in-memory storage and the synthetic test set only. Prints a per-slide repor
 writes tests/eval/results/latest.json.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -96,7 +97,7 @@ def main() -> None:
                 continue
             ctx = CourseContext(page.title, prev, tuple(terms))
             # Eval runs on the host, one space at a time; any fixed per-space salt will do.
-            salt = f"eval-{page.space_id}".ljust(32, "0")[:32]
+            salt = hashlib.sha256(f"eval/{page.space_id}".encode()).hexdigest()[:32]
             note = read_slide(model, res, slide, blobs, ctx, cache_salt=salt)
             body = note.body.model_dump(mode="json") if note.body else None
             if note.body:
