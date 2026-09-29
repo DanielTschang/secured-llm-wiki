@@ -144,3 +144,31 @@ def test_glossary_file_is_never_written() -> None:
     model = FakeModel(lambda _m, _t: '{"mappings": []}')
     align_concepts(model, RES, ["全新概念"], local_concept=lambda _n: "local:x", cache_salt=SALT)
     assert path.read_bytes() == before
+
+
+def test_terms_absent_from_the_evidence_are_dropped() -> None:
+    """Only concepts whose name or a glossary alias appears in the slides are kept."""
+    model = FakeModel(
+        lambda _m, _t: (
+            '{"mappings": [{"name": "製程窗口寬度", "concept_id": "concept:process_window"}]}'
+        )
+    )
+    made: list[str] = []
+    evidence = "MEEF = 晶圓 CD 變化量 ÷ 光罩 CD 變化量。pitch 越小 MEEF 越大。"
+    got = align_concepts(
+        model, RES,
+        ["MEEF", "concept:serif", "Bossung curve", "製程窗口寬度", "憑空的新詞"],
+        local_concept=lambda n: made.append(n) or f"local:sp_common:{n}",  # type: ignore[func-returns-value]
+        cache_salt=SALT, evidence=evidence,
+    )  # fmt: skip
+    assert got == {"MEEF": "concept:meef"}
+    assert made == []  # no local concept for a term that is not on the slides
+
+
+def test_alias_in_the_evidence_is_enough() -> None:
+    model = FakeModel(lambda _m, _t: '{"mappings": []}')
+    got = align_concepts(
+        model, RES, ["concept:meef"], local_concept=lambda _n: "x", cache_salt=SALT,
+        evidence="contact layer 的光罩誤差放大因子實測偏高",
+    )  # fmt: skip
+    assert got == {"concept:meef": "concept:meef"}

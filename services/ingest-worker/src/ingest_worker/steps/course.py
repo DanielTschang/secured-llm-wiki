@@ -135,11 +135,13 @@ def build_course(
 
     # Step 3: integrate the course's slide notes.
     course_slides: list[CourseSlide] = []
+    evidence_parts: list[str] = []
     for p in pages:
         notes = {n["slide_ref"]: n for n in store.slide_notes(p.page_id, p.revision)}
         got = slides.page(p.page_id)
         page_slides: list[Slide] = list(got[1].values()) if got else []
         for s in page_slides:
+            evidence_parts += [s.title, s.text]
             note = notes.get(s.slide_ref)
             if note and note["status"] == "ok" and note["body"]:
                 course_slides.append(
@@ -155,8 +157,17 @@ def build_course(
     # Step 4: align concepts; store this course's claims with canonical/local IDs.
     names = [*digest.concepts, *(n for c in digest.claims for n in c.concepts)]
     names += [x for r in digest.relations for x in r[:2]]
+    # Evidence: the slides' own text plus the notes' points and claims (not their concept
+    # lists), so a concept is kept only if the course actually talks about it.
+    for cs in course_slides:
+        evidence_parts += [str(cs.note.get("point", "")), *map(str, cs.note.get("claims", []))]
     mapping = align_concepts(
-        model, res, names, local_concept=store.local_concept, cache_salt=cache_salt
+        model,
+        res,
+        names,
+        local_concept=store.local_concept,
+        cache_salt=cache_salt,
+        evidence="\n".join(evidence_parts),
     )
     store.replace_course_claims(
         course,

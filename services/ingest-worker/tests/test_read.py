@@ -239,3 +239,13 @@ def test_cache_salt_must_be_32_lowercase_hex(salt: str) -> None:
     with pytest.raises(ValueError, match="cache salt"):
         read_slide(model, RES, slide, images, ctx(), cache_salt=salt)
     assert model.calls == []
+
+
+def test_reading_prompt_does_not_list_the_glossary() -> None:
+    """A 7B model echoed the whole glossary into `concepts`; alignment is step 4's job."""
+    slide, images = slide_and_images("common_c1", 3)
+    model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
+    read_slide(model, RES, slide, images, ctx(), cache_salt=SALT)
+    text = model.calls[1].text()
+    assert "concept:bossung_curve" not in text and "標準術語表" not in text
+    assert "投影片中實際出現" in text

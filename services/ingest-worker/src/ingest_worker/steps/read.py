@@ -248,11 +248,6 @@ def _classify(
     return None
 
 
-def _glossary_text(res: Resources) -> str:
-    lines = [f"- {cid}：{'、'.join(aliases)}" for cid, aliases in res.glossary]
-    return "標準術語表（概念請盡量以此 ID 表示，對不上時寫原文用語）：\n" + "\n".join(lines)
-
-
 def _read(
     model: VisionModel,
     res: Resources,
@@ -268,7 +263,6 @@ def _read(
         f"課名：{ctx.course_title}",
         f"前一張投影片重點：{ctx.previous_point or '（無）'}",
         f"本課已出現的術語：{'、'.join(ctx.terms) or '（無）'}",
-        _glossary_text(res),
     ]
     if types:
         order = "、".join(f"第 {i + 1} 張為 {t}" for i, t in enumerate(types))
@@ -276,7 +270,8 @@ def _read(
     else:
         ask = "這張投影片沒有圖，`figures` 必須是空陣列；表格請轉為 claims。"
     instruction = TextPart(
-        f"{ask}輸出 point（本張重點，一句話）、figures、claims（可驗證的敘述）、concepts。"
+        f"{ask}輸出 point（本張重點，一句話）、figures、claims（可驗證的敘述）、"
+        "concepts（只列投影片中實際出現的專業用語，照原文寫，不要推測或補充其他概念）。"
     )
     user = Message("user", [TextPart("\n".join(header)), *_slide_parts(slide, images), instruction])
     schema = note_schema(types)

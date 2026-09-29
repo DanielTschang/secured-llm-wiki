@@ -66,9 +66,14 @@ def eval_alignment(vlm: OpenAICompatibleBackend, res: Resources) -> dict[str, An
                 cache_salt=salt(page.space_id),
             )  # fmt: skip
             names = list(note.body.concepts) if note.body else []
-            mapped = align_concepts(
-                vlm, res, names, local_concept=store.local_concept, cache_salt=salt(page.space_id)
+            evidence = "\n".join(
+                [slide.title, slide.text]
+                + ([note.body.point, *note.body.claims] if note.body else [])
             )
+            mapped = align_concepts(
+                vlm, res, names, local_concept=store.local_concept,
+                cache_salt=salt(page.space_id), evidence=evidence,
+            )  # fmt: skip
             got = {c for c in mapped.values() if c.startswith("concept:")}
             want = set(GOLD[slide.slide_ref]["concepts"])
             tp, fp, fn = tp + len(got & want), fp + len(got - want), fn + len(want - got)
@@ -131,21 +136,25 @@ def eval_version(
 
 
 def main() -> None:
+    only = set(sys.argv[1:])  # "alignment" and/or "version"; default both
     res = Resources.load(REPO / "schema")
     vlm = model(os.environ.get("KC_EVAL_MODEL", "qwen2.5vl:7b"))
     embedder = model(os.environ.get("KC_EVAL_EMBED_MODEL", "bge-m3"))
     start = time.monotonic()
-    alignment = eval_alignment(vlm, res)
-    print(json.dumps({k: alignment[k] for k in ("precision", "recall")}), flush=True)
-    versions = []
-    for order in (["opc_o1", "opc_o2"], ["opc_o2", "opc_o1"]):
+    alignment: dict[str, Any] = {"precision": None, "recall": None}
+    if not only or "alignment" in only:
+        alignment = eval_alignment(vlm, res)
+        print(json.dumps({k: alignment[k] for k in ("precision", "recall")}), flush=True)
+    versions: list[dict[str, Any]] = []
+    orders = [["opc_o1", "opc_o2"], ["opc_o2", "opc_o1"]] if not only or "version" in only else []
+    for order in orders:
         v = eval_version(vlm, embedder, res, order)
         versions.append(v)
         print(json.dumps({k: v[k] for k in v if k != "body"}, ensure_ascii=False), flush=True)
     summary = {
         "alignment_precision": alignment["precision"],
         "alignment_recall": alignment["recall"],
-        "meef_current_2_5_both_orders": all(v["ok"] for v in versions),
+        "meef_current_2_5_both_orders": all(v["ok"] for v in versions) if versions else None,
         "seconds": round(time.monotonic() - start),
     }
     print(json.dumps(summary))

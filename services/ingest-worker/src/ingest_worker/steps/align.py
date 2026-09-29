@@ -37,8 +37,23 @@ def align_concepts(
     *,
     local_concept: Callable[[str], str],
     cache_salt: str,
+    evidence: str | None = None,
 ) -> dict[str, str]:
+    """`evidence` (the slides' text and notes): when given, a name is kept only if it, or an
+    alias of the concept it maps to, actually appears there. Models tend to list concepts
+    that are merely related; those are dropped (and get no local concept either)."""
     ids = {cid for cid, _ in res.glossary}
+    aliases_of = {cid: [cid.removeprefix("concept:"), *a] for cid, a in res.glossary}
+    seen = normalise(evidence) if evidence is not None else None
+
+    def present(term: str) -> bool:
+        return seen is None or normalise(term) in seen
+
+    def supported(name: str, cid: str | None) -> bool:
+        if present(name):
+            return True
+        return cid is not None and any(present(a) for a in aliases_of.get(cid, []))
+
     alias_index: dict[str, str] = {}
     for cid, aliases in res.glossary:
         alias_index[normalise(cid)] = cid
@@ -51,8 +66,9 @@ def align_concepts(
     for name in dict.fromkeys(names):
         cid = alias_index.get(normalise(name))
         if cid is not None:
-            out[name] = cid
-        elif name.strip():
+            if supported(name, cid):
+                out[name] = cid
+        elif name.strip() and present(name):
             unknown.append(name)
     if not unknown:
         return out
@@ -98,5 +114,8 @@ def align_concepts(
     except ModelError, ValidationError, ValueError:
         pass
     for name in unknown:
-        out[name] = chosen.get(name) or local_concept(name)
+        cid = chosen.get(name)
+        if cid is not None and not supported(name, cid):
+            continue
+        out[name] = cid or local_concept(name)
     return out
