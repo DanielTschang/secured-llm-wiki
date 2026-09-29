@@ -34,8 +34,9 @@ leak-infra: ; $(GUARD) $(KUBE_CONTEXT)
 integration:
 	uv run pytest tests/integration -m integration -rs
 
+# Ingest steps 1-2 against gold/slides.json, using the host's model server (Ollama).
 eval:
-	@echo "no eval yet: quality evaluation starts at M2 (gold/slides.json)"
+	uv run python tests/eval/run_eval.py
 
 lint:
 	uv run ruff check .

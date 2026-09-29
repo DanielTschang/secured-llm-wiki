@@ -64,7 +64,7 @@ def test_figure_slide_is_classified_then_read_with_guides() -> None:
     system = model.calls[1].messages[0]
     guide_text = "\n".join(p.text for p in system.parts if isinstance(p, TextPart))
     assert "meef_pitch_<nm 數字>" in guide_text  # the meef_plot guide was applied
-    assert "bossung" not in guide_text.lower()  # and only the guides that apply
+    assert "_best_focus_um" not in guide_text  # the bossung_curve guide was not included
     assert note.body is not None and note.body.figures[0].reads["meef_pitch_90"] == 2.8
 
 
@@ -136,3 +136,84 @@ def test_labels_come_from_the_slide_not_the_model() -> None:
     note = read_slide(model, RES, slide, images, ctx())
     assert note.labels == slide.labels
     assert note.slide_ref == "common_c1#4" and note.page_revision == slide.page_revision
+
+
+def test_reading_schema_is_constrained_per_figure_type() -> None:
+    slide, images = slide_and_images("common_c1", 3)
+    model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
+    read_slide(model, RES, slide, images, ctx())
+    schema = model.calls[1].json_schema
+    assert schema is not None
+    figures = schema["properties"]["figures"]
+    assert figures["minItems"] == figures["maxItems"] == 1
+    fig = figures["prefixItems"][0]
+    assert fig["properties"]["type"] == {"const": "meef_plot"}
+    assert fig["properties"]["reads"]["additionalProperties"] == {"type": "number"}
+    assert fig["additionalProperties"] is False
+
+
+def test_categorical_reads_are_closed_sets() -> None:
+    from ingest_worker.steps.read import READ_SCHEMAS
+
+    assert "magnification" in READ_SCHEMAS["overlay_vector_map"]["properties"]["pattern"]["enum"]
+    assert READ_SCHEMAS["sem"]["additionalProperties"]["enum"][0] == "normal"
+    assert "serif" in READ_SCHEMAS["schematic"]["properties"]["features"]["items"]["enum"]
+
+
+def test_text_only_schema_allows_no_figures() -> None:
+    slide, images = slide_and_images("cd_d1", 4)
+    model = FakeModel(script("unused", note_json([])))
+    read_slide(model, RES, slide, images, ctx())
+    schema = model.calls[0].json_schema
+    assert schema is not None and schema["properties"]["figures"]["maxItems"] == 0
+
+
+def test_classification_prompt_describes_each_type() -> None:
+    slide, images = slide_and_images("common_c1", 3)
+    model = FakeModel(script('{"figure_types": ["meef_plot"]}', note_json([meef_fig()])))
+    read_slide(model, RES, slide, images, ctx())
+    prompt = model.calls[0].text()
+    assert "screenshot" in prompt and "規則表" in prompt  # screenshots of rule tables
+    assert "sem" in prompt and "電子顯微鏡" in prompt
+
+
+def test_schema_has_no_boolean_subschemas() -> None:
+    """Ollama's grammar converter rejects boolean schemas such as "items": false."""
+    from ingest_worker.steps.read import FIGURE_TYPES, note_schema
+
+    def walk(node: object, key: str = "") -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if (
+                    k in {"items", "additionalProperties"}
+                    and isinstance(v, bool)
+                    and v is not False
+                ):
+                    raise AssertionError(k)
+                if k == "items":
+                    assert isinstance(v, dict), f"{key}.items must be an object"
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, key)
+
+    walk(note_schema(list(FIGURE_TYPES)))
+    walk(note_schema([]))
+
+
+def test_host_normalises_transcribed_figures_and_stray_keys() -> None:
+    """Screenshots, tables, SEM and schematics are transcribed or described, never estimated,
+    so numbers_from_figure is false by definition; field names leaking into reads are dropped."""
+    slide, images = slide_and_images("opc_o2", 1)  # the rule-table screenshot
+    fig = {
+        "type": "screenshot",
+        "reads": {"meef_threshold": 2.5, "numbers_from_figure": 1, "confidence": 1},
+        "numbers_from_figure": True,
+        "confidence": 0.9,
+    }
+    model = FakeModel(script('{"figure_types": ["screenshot"]}', note_json([fig])))
+    note = read_slide(model, RES, slide, images, ctx())
+    assert note.body is not None
+    got = note.body.figures[0]
+    assert got.numbers_from_figure is False
+    assert got.reads == {"meef_threshold": 2.5}

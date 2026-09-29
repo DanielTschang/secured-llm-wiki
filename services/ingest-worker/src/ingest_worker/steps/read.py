@@ -22,6 +22,7 @@ from kc_models import ImagePart, Message, ModelError, Part, TextPart, VisionMode
 
 __all__ = [
     "FIGURE_TYPES",
+    "READ_SCHEMAS",
     "CourseContext",
     "FigureReading",
     "NoteBody",
@@ -78,6 +79,92 @@ class NoteBody(_Strict):
 
 class _Classification(_Strict):
     figure_types: list[FigureType]
+
+
+_NUMBER: dict[str, Any] = {"type": "number"}
+
+
+def _obj(props: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _map(values: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "object", "additionalProperties": values}
+
+
+_OVERLAY = ["translation", "rotation", "magnification", "orthogonality", "random"]
+_WAFER = [
+    "radial_edge_low", "radial_edge_high", "radial_center_low", "radial_center_high",
+    "gradient", "uniform", "random",
+]  # fmt: skip
+_SEM = ["normal", "bridging", "pinching", "line_collapse", "scumming", "other"]
+_FEATURES = [
+    "serif", "hammerhead", "assist_feature", "bias", "line_end_shortening", "corner_rounding",
+]  # fmt: skip
+
+# What each figure type's `reads` may contain (mirrors schema/figure_guides). Sent to the
+# model as a constrained-decoding schema: numbers are numbers, categories are closed sets.
+READ_SCHEMAS: dict[str, dict[str, Any]] = {
+    "bossung_curve": _map(_NUMBER),
+    "process_window": _obj({"dof_um": _NUMBER, "exposure_latitude_pct": _NUMBER}, ["dof_um"]),
+    "meef_plot": _map(_NUMBER),
+    "overlay_vector_map": _obj(
+        {"pattern": {"enum": _OVERLAY}, "max_nm": _NUMBER}, ["pattern", "max_nm"]
+    ),
+    "wafer_map": _obj(
+        {"pattern": {"enum": _WAFER}, "edge_drop_nm": _NUMBER}, ["pattern", "edge_drop_nm"]
+    ),
+    "sem": _map({"enum": _SEM}),
+    "schematic": _obj({"features": {"type": "array", "items": {"enum": _FEATURES}}}, ["features"]),
+    "screenshot": _map({"type": ["number", "string"]}),
+    "table": _map({"type": ["number", "string"]}),
+    "bar_chart": _map(_NUMBER),
+    "other": _map({"type": ["number", "string"]}),
+}
+
+_TYPE_HINTS = {
+    "bossung_curve": "CD 對焦距的多條劑量曲線",
+    "process_window": "焦距與劑量／曝光寬容度的窗口（橢圓或多邊形）",
+    "meef_plot": "晶圓 CD 誤差對光罩 CD 誤差的直線圖",
+    "overlay_vector_map": "晶圓或場內的對位誤差向量箭頭圖",
+    "wafer_map": "以色階表示量測值的晶圓圓形分布圖",
+    "sem": "掃描式電子顯微鏡（SEM）的灰階實拍影像",
+    "schematic": "說明概念的線條示意圖（例如修正前後的光罩圖形）",
+    "screenshot": "軟體畫面、設定或規則表的截圖（包含以表格呈現的規則表）",
+    "table": "純資料表格的圖片（不是軟體規則表的截圖）",
+    "bar_chart": "長條圖或殘差圖",
+    "other": "以上皆非",
+}
+
+
+def note_schema(types: Sequence[str]) -> dict[str, Any]:
+    """NoteBody's JSON schema with the figures fixed to the classified types, in order."""
+    schema = NoteBody.model_json_schema()
+    if not types:
+        schema["properties"]["figures"] = {"type": "array", "maxItems": 0}
+        return schema
+    items = [
+        _obj(
+            {
+                "type": {"const": t},
+                "reads": READ_SCHEMAS[t],
+                "numbers_from_figure": {"type": "boolean"},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            ["type", "reads", "numbers_from_figure", "confidence"],
+        )
+        for t in types
+    ]
+    schema["properties"]["figures"] = {
+        "type": "array", "minItems": len(types), "maxItems": len(types),
+        "prefixItems": items,  # maxItems bounds the tail; Ollama rejects "items": false
+    }  # fmt: skip
+    return schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,9 +227,10 @@ def _classify(
     n = len(slide.figures)
     schema = _Classification.model_json_schema()
     schema["properties"]["figure_types"] |= {"minItems": n, "maxItems": n}
+    kinds = "\n".join(f"- {t}：{_TYPE_HINTS[t]}" for t in FIGURE_TYPES)
     instruction = TextPart(
-        f"這張投影片有 {n} 張圖。依出現順序為每張圖分類，"
-        f'類型只能是：{", ".join(FIGURE_TYPES)}。輸出 {{"figure_types": [...]}}。'
+        f"這張投影片有 {n} 張圖。依出現順序為每張圖分類，類型只能是：\n{kinds}\n"
+        'Output {"figure_types": [...]}.'
     )
     messages = [
         Message("system", [TextPart(_ROLE)]),
@@ -189,7 +277,7 @@ def _read(
         f"{ask}輸出 point（本張重點，一句話）、figures、claims（可驗證的敘述）、concepts。"
     )
     user = Message("user", [TextPart("\n".join(header)), *_slide_parts(slide, images), instruction])
-    schema = NoteBody.model_json_schema()
+    schema = note_schema(types)
     for _ in range(2):
         try:
             raw = model.chat([system, user], json_schema=schema, tag=f"{slide.slide_ref}:read")
@@ -197,8 +285,26 @@ def _read(
         except ModelError, ValidationError, ValueError:
             continue
         if [f.type for f in body.figures] == list(types):
-            return body
+            return _normalise(body)
     return None
+
+
+# Figure types whose readings are transcribed or described, never estimated from geometry.
+_TRANSCRIBED = frozenset({"screenshot", "table", "sem", "schematic"})
+_FIELD_NAMES = frozenset({"type", "numbers_from_figure", "confidence"})
+
+
+def _normalise(body: NoteBody) -> NoteBody:
+    figures = [
+        f.model_copy(
+            update={
+                "reads": {k: v for k, v in f.reads.items() if k not in _FIELD_NAMES},
+                "numbers_from_figure": False if f.type in _TRANSCRIBED else f.numbers_from_figure,
+            }
+        )
+        for f in body.figures
+    ]
+    return body.model_copy(update={"figures": figures})
 
 
 def read_slide(
