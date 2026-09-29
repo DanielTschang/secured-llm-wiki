@@ -1,4 +1,8 @@
-"""Per-space key service (Vault transit in the cluster). Each space has its own key."""
+"""Per-space keyed digests (Vault transit HMAC in the cluster). Each space has its own key.
+
+Content encryption was removed for now (ADR-012); HMAC stays because IDs derived from it
+go into logs and object keys and must not be matchable against outside content.
+"""
 
 from typing import Protocol
 
@@ -12,12 +16,6 @@ class KeyServiceError(Exception):
 
 
 class KeyService(Protocol):
-    def new_data_key(self, space_id: SpaceId) -> tuple[bytes, str]:
-        """A fresh 256-bit data key and its wrapped form (wrapped by the space's key)."""
-        ...
-
-    def unwrap(self, space_id: SpaceId, wrapped: str) -> bytes: ...
-
     def hmac(self, space_id: SpaceId, data: bytes) -> bytes:
         """Keyed digest with the space's key: stable within a space, unlinkable across."""
         ...

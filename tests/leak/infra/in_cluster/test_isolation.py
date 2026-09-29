@@ -58,21 +58,19 @@ def test_task_token_cannot_use_other_space(opc: VaultClient) -> None:
     denied(lambda: opc.database_creds(CD))
     denied(lambda: opc.kv(f"spaces/{CD}/s3"))
     denied(lambda: opc.kv(f"spaces/{CD}/neo4j"))
-    denied(lambda: opc.datakey(CD))
-    denied(lambda: opc.decrypt(CD, "vault:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
+    denied(lambda: opc.hmac(CD, "AAAA"))
     denied(lambda: opc.child_token(f"space-{CD}"))
     # Positive control: its own space works end to end.
     opc.database_creds(OPC)
     opc.kv(f"spaces/{OPC}/s3")
-    plaintext, wrapped = opc.datakey(OPC)
-    assert opc.decrypt(OPC, wrapped) == plaintext
+    assert opc.hmac(OPC, "AAAA").startswith("vault:v1:")
 
 
 def test_broker_token_reads_no_space_data(broker: VaultClient, http: httpx.Client) -> None:
     for space in (OPC, CD):
         denied(lambda s=space: broker.database_creds(s))
         denied(lambda s=space: broker.kv(f"spaces/{s}/s3"))
-        denied(lambda s=space: broker.datakey(s))
+        denied(lambda s=space: broker.hmac(s, "AAAA"))
     # It cannot mint a token with arbitrary policies either.
     resp = http.post(
         "/v1/auth/token/create",
@@ -179,9 +177,9 @@ def test_task_token_is_short_lived_single_space_and_revocable(broker: VaultClien
     greedy = broker.with_token(broker.child_token(f"space-{OPC}", ttl="72h"))
     assert greedy.lookup_self()["creation_ttl"] <= 600
     greedy.revoke_self()
-    task.datakey(OPC)  # positive control: usable before revocation
+    task.hmac(OPC, "AAAA")  # positive control: usable before revocation
     task.revoke_self()
-    denied(lambda: task.datakey(OPC))
+    denied(lambda: task.hmac(OPC, "AAAA"))
 
 
 # --- task processes cannot read each other (ADR-006, same UID in the runner) --------------

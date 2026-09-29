@@ -63,6 +63,17 @@ def assert_no_content(text: str) -> None:
         assert t not in text, "page title found in observability output"
 
 
+def assert_no_foreign_content(text: str, space: str) -> None:
+    """A space's own storage must hold nothing from any other space: no other space's
+    canary and no other space's page title (ADR-012: content itself is not encrypted)."""
+    for c in load_canaries():
+        if c.source_space != space and c.context is None:
+            assert c.text not in text, f"{c.source_space} canary stored in {space}"
+    for p in load_manifest()["pages"]:
+        if p["space_id"] != space:
+            assert p["title"] not in text, f"{p['space_id']} title stored in {space}"
+
+
 # Headers that legitimately differ between any two responses.
 _VOLATILE_HEADERS = {"date", "content-length"}
 

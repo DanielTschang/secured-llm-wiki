@@ -10,7 +10,7 @@ LLM Wiki 模式的 wiki 是一個 markdown 目錄，含 `index.md` 與 `log.md`�
 
 ## 決策
 
-1. **每個 space 一個 OKF v0.2 bundle，bundle 就是 space wiki 的正本**，存於該 space 的 MinIO bucket `wiki/` 下，以該 space 金鑰加密。MongoDB、LanceDB、Neo4j 中的資料都是從 bundle 解析出的索引，可重建。
+1. **每個 space 一個 OKF v0.2 bundle，bundle 就是 space wiki 的正本**，存於該 space 的 MinIO bucket `wiki/` 下，以該 space 金鑰加密（目前由 ADR-012 暫時取代）。MongoDB、LanceDB、Neo4j 中的資料都是從 bundle 解析出的索引，可重建。
 2. **目錄與檔名**：`index.md`、`log.md`、`concepts/`、`entities/`、`courses/`、`synthesis/`；檔名一律為不透明 ULID，名稱只在 frontmatter `title`。任何路徑都不含名稱或內容，因為路徑會進入 log。
 3. **frontmatter 由 host 程式寫入，LLM 不得產生或修改**：`type`、`sources`、`generated`、`verified`、`status`，以及自訂欄位 `kc_labels`（來源 space 集合）與 `kc_concept`（對應的 canonical 概念 ID）。LLM 只寫內文與 `title`、`description`、`tags`。
 4. **引用**：`sources[]` 每張投影片一筆（`id` 如 `opc_o2-s3`，`resource` 為 `kc://<space>/pages/<page_id>?rev=<n>&slide=<k>`，`last_modified` 為平台 `updated_date`）。內文每句附註腳；寫入前檢查所有註腳 id 屬於 `sources[].id`，否則拒絕寫入。grounding 驗證逐一檢查註腳對應的投影片是否支持該句，無依據者刪除或標示為推論。

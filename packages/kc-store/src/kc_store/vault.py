@@ -61,15 +61,6 @@ class VaultClient:
     def with_token(self, token: str) -> VaultClient:
         return VaultClient(self._http, token)
 
-    def datakey(self, key: str) -> tuple[str, str]:
-        data = self._call("POST", f"transit/datakey/plaintext/{key}")["data"]
-        return data["plaintext"], data["ciphertext"]
-
-    def decrypt(self, key: str, ciphertext: str) -> str:
-        return self._call("POST", f"transit/decrypt/{key}", {"ciphertext": ciphertext})["data"][
-            "plaintext"
-        ]
-
     def hmac(self, key: str, data_b64: str) -> str:
         return self._call("POST", f"transit/hmac/{key}/sha2-256", {"input": data_b64})["data"][
             "hmac"
@@ -84,21 +75,10 @@ class VaultClient:
 
 
 class VaultKeyService:
-    """KeyService on Vault transit: one key per space, named by the space ID."""
+    """KeyService on Vault transit HMAC: one key per space, named by the space ID."""
 
     def __init__(self, vault: VaultClient) -> None:
         self._vault = vault
-
-    def new_data_key(self, space_id: SpaceId) -> tuple[bytes, str]:
-        import base64
-
-        plaintext, wrapped = self._vault.datakey(space_id)
-        return base64.b64decode(plaintext), wrapped
-
-    def unwrap(self, space_id: SpaceId, wrapped: str) -> bytes:
-        import base64
-
-        return base64.b64decode(self._vault.decrypt(space_id, wrapped))
 
     def hmac(self, space_id: SpaceId, data: bytes) -> bytes:
         import base64

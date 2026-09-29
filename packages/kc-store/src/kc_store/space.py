@@ -1,11 +1,10 @@
 """SpaceStore: one space's source pages, raw content and ingest bookkeeping.
 
 Every write is fenced by revision and checked to carry exactly this space's labels.
-Content (titles, markdown, attachments) is encrypted with the space's key; object keys
-and document IDs are IDs only.
+Object keys and document IDs are IDs only. Content is stored in plaintext for now
+(ADR-012); cross-space isolation comes from each space's own credentials.
 """
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +12,6 @@ from typing import Any
 from kc_ids import AttachmentId, PageId, Revision, attachment_id_from_digest
 from kc_labels import Labels, SpaceId
 from kc_store.backends import BlobStore, DocStore
-from kc_store.envelope import ObjectRef, open_sealed, seal
 from kc_store.keys import KeyService
 
 __all__ = ["RevisionTaken", "SourcePage", "SpaceStore", "StaleWrite", "WrongSpace"]
@@ -60,9 +58,6 @@ class SpaceStore:
 
     # --- helpers -------------------------------------------------------------
 
-    def _ref(self, kind: str, object_id: str, revision: int) -> ObjectRef:
-        return ObjectRef(self.space_id, kind, object_id, revision)
-
     def check_labels(self, labels: Labels) -> None:
         if labels != self.labels:
             raise WrongSpace
@@ -103,16 +98,10 @@ class SpaceStore:
             raise StaleWrite
 
         rev = page.revision
-        md_ref = self._ref("page_md", page.page_id, rev)
-        if not self._blobs.put_if_absent(
-            self._md_key(page.page_id, rev), seal(self._keys, md_ref, markdown.encode())
-        ):
+        if not self._blobs.put_if_absent(self._md_key(page.page_id, rev), markdown.encode()):
             raise RevisionTaken
         for att, data in attachments.items():
-            ref = self._ref("attachment", f"{page.page_id}/{att}", rev)
-            if not self._blobs.put_if_absent(
-                self._att_key(page.page_id, rev, att), seal(self._keys, ref, data)
-            ):
+            if not self._blobs.put_if_absent(self._att_key(page.page_id, rev, att), data):
                 raise RevisionTaken
 
         doc: dict[str, Any] = {
@@ -120,16 +109,10 @@ class SpaceStore:
             "revision": int(rev),
             "updated_date": page.updated_date,
             "content_hash": page.content_hash,
-            "title_enc": seal(
-                self._keys, self._ref("page_title", page.page_id, rev), page.title.encode()
-            ),
+            "title": page.title,
             "parent_id": page.parent_id,
             "attachment_ids": [str(a) for a in page.attachment_ids],
-            "attachment_map_enc": seal(
-                self._keys,
-                self._ref("attachment_map", page.page_id, rev),
-                json.dumps([[n, str(a)] for n, a in page.attachment_map]).encode(),
-            ),
+            "attachment_map": [[n, str(a)] for n, a in page.attachment_map],
             "labels": sorted(page.labels.spaces),
             "published": False,
         }
@@ -143,16 +126,6 @@ class SpaceStore:
         labels = Labels.of(doc["labels"])
         self.check_labels(labels)
         rev = Revision(int(doc["revision"]))
-        title = open_sealed(
-            self._keys, self._ref("page_title", page_id, rev), bytes(doc["title_enc"])
-        )
-        amap = json.loads(
-            open_sealed(
-                self._keys,
-                self._ref("attachment_map", page_id, rev),
-                bytes(doc["attachment_map_enc"]),
-            )
-        )
         updated: datetime = doc["updated_date"]
         return SourcePage(
             page_id=page_id,
@@ -160,11 +133,11 @@ class SpaceStore:
             revision=rev,
             updated_date=updated if updated.tzinfo else updated.replace(tzinfo=UTC),
             content_hash=doc["content_hash"],
-            title=title.decode(),
+            title=str(doc["title"]),
             parent_id=doc["parent_id"],
             attachment_ids=tuple(AttachmentId(a) for a in doc["attachment_ids"]),
             labels=labels,
-            attachment_map=tuple((str(n), AttachmentId(a)) for n, a in amap),
+            attachment_map=tuple((str(n), AttachmentId(a)) for n, a in doc["attachment_map"]),
         )
 
     def unpublished_revision(self, page_id: PageId) -> Revision | None:
@@ -191,13 +164,13 @@ class SpaceStore:
         blob = self._blobs.get(self._md_key(page_id, revision))
         if blob is None:
             raise KeyError("no such object")
-        return open_sealed(self._keys, self._ref("page_md", page_id, revision), blob).decode()
+        return blob.decode()
 
     def read_attachment(self, page_id: PageId, revision: Revision, att: AttachmentId) -> bytes:
         blob = self._blobs.get(self._att_key(page_id, revision, att))
         if blob is None:
             raise KeyError("no such object")
-        return open_sealed(self._keys, self._ref("attachment", f"{page_id}/{att}", revision), blob)
+        return blob
 
     # --- ingest bookkeeping ------------------------------------------------------
 

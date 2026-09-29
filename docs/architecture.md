@@ -161,7 +161,7 @@ view 永不回寫為 space wiki 頁，也永不作為 ingest 輸入。跨 space 
 | 同步服務 | CronJob（`concurrencyPolicy: Forbid`），以 getPages 比對 `updated_date` | 只寫入原始資料儲存與佇列 |
 | ingest-worker | 單一 Deployment（ADR-006） | 每個任務一個子行程，只持有該 space 的 Vault 短時效憑證；NetworkPolicy 只允許儲存、模型服務、Vault、NATS；對外無出口；建議 gVisor 或 Kata runtime |
 | 佇列 | NATS JetStream，每 space 一個 subject（`kc.page.<space_id>`） | ACL 限定消費者；訊息只含 ID；同一 space `max_ack_pending=1` |
-| 儲存 | MinIO 依 space 分 bucket；MongoDB 依 space 分 database；LanceDB 依 space 分 bucket；Neo4j 每 space 一個 instance；跨 space 衍生物在 `kc_derived` | Vault 依 space 發放憑證與 transit 金鑰；MongoDB 內容欄位於應用層加密；`kc_derived` 的資料金鑰由標籤中每個 space 的金鑰層層包裝 |
+| 儲存 | MinIO 依 space 分 bucket；MongoDB 依 space 分 database；LanceDB 依 space 分 bucket；Neo4j 每 space 一個 instance；跨 space 衍生物在 `kc_derived` | Vault 依 space 發放憑證與 transit 金鑰；MongoDB 內容欄位於應用層加密（ADR-012：暫時移除）；`kc_derived` 的資料金鑰由標籤中每個 space 的金鑰層層包裝 |
 | 模型服務 | GPU 節點上的推論服務 | 關閉請求內容 log；視需要依 space 隔離 prefix cache |
 | view 與查詢 | 無狀態 Deployment | 依每次請求的讀者權限取得解密金鑰 |
 
@@ -173,7 +173,7 @@ view 永不回寫為 space wiki 頁，也永不作為 ingest 輸入。跨 space 
 
 | 層 | 控制 |
 |---|---|
-| 資料 | per-space 加密金鑰；管理者無法解密；log 與 trace 同等保護 |
+| 資料 | per-space 加密金鑰；管理者無法解密；log 與 trace 同等保護（內容加密目前由 ADR-012 暫時移除，上線前必須恢復） |
 | ingest | 單一 space 沙盒；無對外網路；地端模型 |
 | view 與查詢 | 即時權限、先過濾、快取 key 含標籤、輸出前驗證、不回寫 |
 | 圖片 | 只經驗權端點提供，無公開靜態網址 |
@@ -213,13 +213,14 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 
 ## 16. 已知缺口
 
+- **per-space 內容加密暫時移除**（ADR-012）：MinIO 物件與 MongoDB 欄位目前為明文，能讀取儲存層的人可讀到內容；跨 space 隔離仍由 per-space 憑證強制。**上線前必須恢復，最晚 M6。**
 - **M1–M5 不處理頁面刪除與搬移**：頁面刪除或搬到更嚴格的 space 後，舊內容仍留在原 space wiki。M6 必須完成，否則不得上線。
 - **ingest 的 space 隔離為程式與行程層級**（ADR-006）：防程式 bug，不防 ingest-worker 主行程被入侵。
 - **LanceDB 的 per-space 加密**：待調查 Lance／object_store 是否支援 SSE-C；若不支援，LanceDB 僅有 bucket 權限隔離與 SSE。
 - **Neo4j Community 每 space 一個 instance**：正式環境是否改用 Enterprise 多資料庫視授權與 space 數量決定。
 - **MinIO 社群版**已進入維護模式，正式環境 object store 待定。社群版已不再發佈 image，開發環境改由 `deploy/images/minio/` 從固定的 release tag 原始碼建置。
 - **MinIO 的 per-space 憑證是長效靜態金鑰**（M1）：每個 space 一個只能存取自己 bucket 的 MinIO user，金鑰放在 Vault KV 該 space 的路徑下；不像 MongoDB 動態憑證會自動過期。改用短效憑證（例如 STS）需視正式環境的 object store 而定。
-- **開發環境的 Vault 為 dev mode**：資料在記憶體中，Vault 重啟即遺失所有 transit 金鑰，已加密的開發資料無法再解密，需 `make kind-down && make kind-up` 重建。正式環境改用叢集外 KMS。
+- **開發環境的 Vault 為 dev mode**：資料在記憶體中，Vault 重啟即遺失所有設定、憑證與 transit（HMAC）金鑰，需 `make kind-down && make kind-up` 重建。正式環境改用叢集外 KMS。
 - **ingest 任務子行程被入侵時的跨 space 路徑**（ADR-011，提議中）：runner 與任務同 UID、共用 socket 目錄，被入侵的任務可以攔截其他 space 的子 token。**M2 開始解析文件前必須決定並實作 ADR-011。**
 - **quarantine 前已產生的衍生物**：頁面在 ingest 之後才被設為受限時，之後不再 ingest，但既有的衍生物（graph 節點、ingest 紀錄，M3 起的 wiki 頁）仍留著；M6 必須一併清除。
 - **手動觸發的 sync 不受 CronJob 的 `concurrencyPolicy` 限制**：兩個 sync 並行時，較舊的抓取可能暫時覆蓋較新的內容（僅同一 space 內，下次 sync 自我修復）；M6 以 per-space lease 處理。

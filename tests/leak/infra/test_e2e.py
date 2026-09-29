@@ -14,7 +14,7 @@ import httpx
 import pytest
 from pymongo import MongoClient
 
-from tests.leak.harness import assert_no_content, load_manifest
+from tests.leak.harness import assert_no_content, assert_no_foreign_content, load_manifest
 from tests.support.cluster import NAMESPACE, kubectl, local_cluster_ok, port_forward
 
 pytestmark = pytest.mark.infra
@@ -158,7 +158,8 @@ def test_sync_then_ingest_then_idempotent_resync(ports: dict[str, int]) -> None:
     assert after == before  # unchanged updated_date: no new revisions
 
 
-def test_raw_objects_are_ciphertext(ports: dict[str, int]) -> None:
+def test_each_space_bucket_holds_only_its_own_content(ports: dict[str, int]) -> None:
+    """ADR-012: objects are plaintext, so check the real invariant directly."""
     s3 = boto3.client(
         "s3",
         endpoint_url=f"http://127.0.0.1:{ports['minio']}",
@@ -170,12 +171,11 @@ def test_raw_objects_are_ciphertext(ports: dict[str, int]) -> None:
     for space in SPACES:
         bucket = f"kc-{space.replace('_', '-')}-raw"
         for obj in s3.list_objects_v2(Bucket=bucket).get("Contents", []):
-            if obj.get("Key", "").startswith("pages/it_"):
-                continue  # integration-test objects (some deliberately unsealed)
-            body = s3.get_object(Bucket=bucket, Key=obj.get("Key", ""))["Body"].read()
-            assert body.startswith(b"KC1\x00"), "object is not sealed"
-            assert_no_content(body.decode("utf-8", errors="ignore"))
-            assert b"\x89PNG" not in body
+            key = obj.get("Key", "")
+            if key.startswith("pages/it_"):
+                continue  # integration-test objects
+            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            assert_no_foreign_content(body.decode("utf-8", errors="ignore"), space)
             seen += 1
     assert seen >= 5 + 12  # 5 pages + their attachments
 
@@ -196,8 +196,7 @@ def test_no_content_in_any_pod_log(ports: dict[str, int]) -> None:
             assert a.rsplit("/", 1)[1] not in logs, "attachment filename in pod logs"
 
 
-def test_no_content_in_any_database_field(ports: dict[str, int]) -> None:
-    """Everything in each space's database is IDs, numbers, dates or ciphertext."""
+def test_each_space_database_holds_only_its_own_content(ports: dict[str, int]) -> None:
     from bson import json_util
 
     seen = 0
@@ -205,7 +204,7 @@ def test_no_content_in_any_database_field(ports: dict[str, int]) -> None:
         db = space_db(ports, space)
         for coll in db.list_collection_names():
             for doc in db[coll].find():
-                assert_no_content(json_util.dumps(doc))
+                assert_no_foreign_content(json_util.dumps(doc, ensure_ascii=False), space)
                 seen += 1
     assert seen >= 10  # positive control: 5 source pages + 5 ingest runs at least
 

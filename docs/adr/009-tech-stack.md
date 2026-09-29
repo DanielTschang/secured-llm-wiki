@@ -15,7 +15,7 @@
 | 語言 | Python 3.14（套件不支援時退回 3.13）；ruff、pyright strict、pytest、hypothesis | |
 | 服務間呼叫 | FastAPI／HTTP | |
 | 佇列 | NATS JetStream，每 space 一個 subject | subject 權限可直接落實「每 space 限定消費者」；比 Kafka 輕 |
-| 文件與 metadata | MongoDB，每 space 一個 database 與 user | database 層級權限隔離；Community 無 encryption at rest，內容欄位於應用層加密 |
+| 文件與 metadata | MongoDB，每 space 一個 database 與 user | database 層級權限隔離；Community 無 encryption at rest，內容欄位於應用層加密（目前由 ADR-012 暫時取代） |
 | 向量與全文索引 | LanceDB，存於 object store，每 space 一個 bucket | 每 space 一個 table，BM25 的 IDF 天然只在單一 space 內計算 |
 | 圖 | Neo4j Community，每 space 一個 instance | Community 只有單一 database 且無細粒度 RBAC；共用 instance 以屬性過濾會先算後篩 |
 | object store | MinIO（固定版本） | |

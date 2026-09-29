@@ -78,7 +78,6 @@ source_modules =
 forbidden_modules =
     kc_store.space
     kc_store.context
-    kc_store.envelope
     kc_graph
     ingest_worker.pipeline
     ingest_worker.task

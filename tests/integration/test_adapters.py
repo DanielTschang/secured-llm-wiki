@@ -16,7 +16,6 @@ from kc_graph import StaleGraphWrite
 from kc_ids import PageId, Revision
 from kc_labels import Labels, SpaceId
 from kc_store.context import Endpoints, SpaceContext, open_space
-from kc_store.envelope import DecryptError
 from kc_store.space import SourcePage, StaleWrite
 from kc_store.testing import fake_attachment_id
 from kc_store.vault import VaultClient, VaultError
@@ -100,7 +99,7 @@ def new_page_id() -> PageId:
     return PageId(f"it_{uuid.uuid4().hex[:12]}")
 
 
-def test_roundtrip_and_encryption_at_rest(opc: SpaceContext, ports: dict[str, int]) -> None:
+def test_roundtrip_in_own_bucket_only(opc: SpaceContext, ports: dict[str, int]) -> None:
     pid = new_page_id()
     png = b"\x89PNG integration KESTREL"
     opc.store.put_source_page(
@@ -111,7 +110,7 @@ def test_roundtrip_and_encryption_at_rest(opc: SpaceContext, ports: dict[str, in
     got = opc.store.get_source_page(pid)
     assert got is not None and got.title == "OPC 實務入門（2025 版）"
 
-    # Read the raw objects as MinIO root: ciphertext only.
+    # As MinIO root: the objects live in sp_opc's bucket, under ID-only keys.
     s3 = boto3.client(
         "s3",
         endpoint_url=f"http://127.0.0.1:{ports['minio']}",
@@ -122,9 +121,9 @@ def test_roundtrip_and_encryption_at_rest(opc: SpaceContext, ports: dict[str, in
     listing = s3.list_objects_v2(Bucket="kc-sp-opc-raw", Prefix=f"pages/{pid}/")
     keys = [o.get("Key", "") for o in listing.get("Contents", [])]
     assert len(keys) == 2
-    for k in keys:
-        body = s3.get_object(Bucket="kc-sp-opc-raw", Key=k)["Body"].read()
-        assert b"KESTREL" not in body
+    assert all(k.startswith(f"pages/{pid}/1/") for k in keys)
+    for other in ("kc-sp-cd-raw", "kc-sp-common-raw"):
+        assert not s3.list_objects_v2(Bucket=other, Prefix=f"pages/{pid}/").get("Contents")
 
 
 def test_fencing_at_real_stores(opc: SpaceContext) -> None:
@@ -157,24 +156,11 @@ def test_task_token_is_single_space(ports: dict[str, int]) -> None:
         lambda: v.database_creds(CD),
         lambda: v.kv(f"spaces/{CD}/s3"),
         lambda: v.kv(f"spaces/{CD}/neo4j"),
-        lambda: v.datakey(CD),
+        lambda: v.hmac(CD, "AAAA"),
     ):
         with pytest.raises(VaultError) as exc:
             call()
         assert exc.value.status == 403
     # Positive control: its own space works.
     v.database_creds(OPC)
-    v.datakey(OPC)
-
-
-def test_other_space_cannot_decrypt(opc: SpaceContext, ports: dict[str, int]) -> None:
-    pid = new_page_id()
-    opc.store.put_source_page(page(pid, 1), "secret", {})
-    blob = opc.store._blobs.get(f"pages/{pid}/1/page.md")  # pyright: ignore[reportPrivateUsage]
-    assert blob is not None
-    from kc_store.envelope import ObjectRef, open_sealed
-    from kc_store.vault import VaultKeyService
-
-    cd_keys = VaultKeyService(task_vault(ports, CD))
-    with pytest.raises(DecryptError):
-        open_sealed(cd_keys, ObjectRef(OPC, "page_md", pid, 1), blob)
+    v.hmac(OPC, "AAAA")

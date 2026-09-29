@@ -104,10 +104,8 @@ class Vault:
 
 
 def storage_policy(space: str) -> str:
-    """Encrypt/decrypt, keyed digests, database and object store for one space."""
+    """Keyed digests, database and object store for one space (no content keys: ADR-012)."""
     return f"""
-path "transit/datakey/plaintext/{space}" {{ capabilities = ["update"] }}
-path "transit/decrypt/{space}" {{ capabilities = ["update"] }}
 path "transit/hmac/{space}/*" {{ capabilities = ["update"] }}
 path "database/creds/{space}" {{ capabilities = ["read"] }}
 path "kv/data/spaces/{space}/s3" {{ capabilities = ["read"] }}

@@ -49,15 +49,13 @@ def test_roundtrip(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs]) -> Non
     assert s.read_attachment(PageId("opc_o2"), Revision(1), fake_attachment_id(PNG)) == PNG
 
 
-def test_content_is_encrypted_at_rest(
+def test_object_keys_and_doc_ids_are_ids_only(
     parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
 ) -> None:
     _, docs, blobs = parts
     store(parts).put_source_page(page(), "# md KESTREL", {fake_attachment_id(PNG): PNG})
-    assert "OPC 實務" not in repr(docs.dump())
-    assert all(b"KESTREL" not in b and PNG not in b for b in blobs.dump().values())
-    # Object keys are IDs only.
-    assert all("opc_o2" in k and "OPC" not in k for k in blobs.dump())
+    assert all(k.startswith("pages/opc_o2/1/") and "OPC" not in k for k in blobs.dump())
+    assert [d["_id"] for d in docs.dump()["source_pages"]] == ["opc_o2"]
 
 
 @pytest.mark.parametrize("rev", [1, 2])
@@ -125,16 +123,6 @@ def test_undeclared_attachment_rejected(
         store(parts).put_source_page(page(), "x", {fake_attachment_id(b"other"): b"other"})
 
 
-def test_other_space_keys_cannot_read(
-    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
-) -> None:
-    keys, docs, blobs = parts
-    SpaceStore(OPC, keys=keys, docs=docs, blobs=blobs).put_source_page(page(), "secret", {})
-    thief = SpaceStore(OPC, keys=keys.restricted_to(CD), docs=docs, blobs=blobs)
-    with pytest.raises(Exception, match="decrypt"):
-        thief.read_markdown(PageId("opc_o2"), Revision(1))
-
-
 def test_ingest_run_fenced(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs]) -> None:
     s = store(parts)
     s.record_ingest_run(PageId("opc_o2"), Revision(2), "done")
@@ -151,18 +139,16 @@ def test_quarantine_records_ids_only(parts: tuple[FakeKeyService, MemoryDocs, Me
     assert docs.dump()["quarantine"] == [{"_id": "opc_secret"}]
 
 
-def test_attachment_names_stored_encrypted(
+def test_attachment_map_roundtrip(
     parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
 ) -> None:
     from dataclasses import replace
 
-    _, docs, _ = parts
     att = fake_attachment_id(PNG)
     p = replace(page(), attachment_map=(("o2_rules_2025.png", att),))
     store(parts).put_source_page(p, "x", {att: PNG})
     got = store(parts).get_source_page(PageId("opc_o2"))
     assert got is not None and got.attachment_map == (("o2_rules_2025.png", att),)
-    assert "o2_rules" not in repr(docs.dump())
 
 
 def test_attachment_map_must_reference_declared_ids(
