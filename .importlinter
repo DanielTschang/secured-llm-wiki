@@ -55,9 +55,11 @@ modules =
     ingest_worker
 
 [importlinter:contract:pipeline-only-spacecontext]
-name = ingest pipeline reaches data only through SpaceContext (ADR-006)
+name = ingest pipeline and steps reach data only through SpaceContext (ADR-006)
 type = forbidden
-source_modules = ingest_worker.pipeline
+source_modules =
+    ingest_worker.pipeline
+    ingest_worker.steps
 forbidden_modules =
     pymongo
     boto3

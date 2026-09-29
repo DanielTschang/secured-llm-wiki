@@ -69,6 +69,8 @@ extend-exclude = ["tests/fixtures", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+# Chinese text legitimately uses full-width punctuation.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/**" = ["S603", "S607"]  # dev tooling that shells out to kubectl
