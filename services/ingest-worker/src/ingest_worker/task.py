@@ -7,6 +7,7 @@ no window in which a sibling process could read the token through /proc.
 
 import os
 import sys
+from pathlib import Path
 
 from ingest_worker.hardening import READY, harden_process
 
@@ -23,9 +24,11 @@ def main() -> int:
     import httpx
 
     from ingest_worker.broker import EXIT_DONE, EXIT_STALE
-    from ingest_worker.pipeline import Quarantined, Stale, stub_ingest
+    from ingest_worker.pipeline import Quarantined, Stale, ingest_page
+    from ingest_worker.steps.read import Resources
     from kc_ids import PageId, Revision
     from kc_labels import SpaceId
+    from kc_models import from_env as model_from_env
     from kc_obs import configure_logging, get_logger
     from kc_store.context import open_space
     from kc_store.vault import VaultClient
@@ -38,7 +41,8 @@ def main() -> int:
     vault = VaultClient(httpx.Client(base_url=os.environ["KC_VAULT_ADDR"], timeout=30), token)
     try:
         with open_space(space, vault) as ctx:
-            stub_ingest(ctx, page_id, revision)
+            resources = Resources.load(Path(os.environ["KC_SCHEMA_DIR"]))
+            ingest_page(ctx, model_from_env(), resources, page_id, revision)
     except Stale:
         log.info("task_stale", space_id=space, page_id=page_id, revision=int(revision))
         return EXIT_STALE

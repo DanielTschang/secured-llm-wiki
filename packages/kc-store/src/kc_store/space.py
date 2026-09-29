@@ -183,6 +183,40 @@ class SpaceStore:
         doc = self._docs.get("ingest_runs", page_id)
         return None if doc is None else (int(doc["revision"]), str(doc["status"]))
 
+    # --- slide notes (ingest step 2) -------------------------------------------------
+
+    def put_slide_note(
+        self,
+        slide_ref: str,
+        page_id: PageId,
+        revision: Revision,
+        labels: Labels,
+        status: str,
+        body: dict[str, Any] | None,
+    ) -> None:
+        self.check_labels(labels)
+        doc = {
+            "page_id": str(page_id),
+            "revision": int(revision),
+            "status": status,
+            "body": body,
+            "labels": sorted(labels.spaces),
+        }
+        if not self._docs.replace_if_revision_below("slide_notes", slide_ref, doc):
+            raise StaleWrite
+
+    def slide_notes(self, page_id: PageId) -> list[dict[str, Any]]:
+        """Notes of the page's slides, in slide order."""
+        out: list[dict[str, Any]] = []
+        n = 1
+        while (doc := self._docs.get("slide_notes", f"{page_id}#{n}")) is not None:
+            self.check_labels(Labels.of(doc["labels"]))
+            out.append(
+                {"slide_ref": f"{page_id}#{n}", **{k: v for k, v in doc.items() if k != "_id"}}
+            )
+            n += 1
+        return out
+
     # --- quarantine (page-level restrictions, ADR-001) -------------------------------
 
     def quarantine(self, page_id: PageId) -> None:

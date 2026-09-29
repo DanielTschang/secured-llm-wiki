@@ -159,7 +159,7 @@ def configure_vault(v: Vault, all_spaces: list[str]) -> None:
                 "creation_statements": json.dumps(
                     {"db": "admin", "roles": [{"role": "readWrite", "db": f"kc_{s}"}]}
                 ),
-                "default_ttl": "15m",
+                "default_ttl": "30m",
                 "max_ttl": "1h",
             },
         )
@@ -174,8 +174,9 @@ def configure_vault(v: Vault, all_spaces: list[str]) -> None:
                 "allowed_policies": [f"space-{s}"],
                 "orphan": True,
                 "renewable": False,
-                # Hard cap; the broker also requests ttl=5m. (Token roles have no token_ttl.)
-                "token_explicit_max_ttl": "10m",
+                # Hard cap; the broker requests ttl=30m: a page's model calls take minutes, and
+                # the task's database lease dies with its token. Tasks revoke it when done.
+                "token_explicit_max_ttl": "45m",
                 "token_no_default_policy": True,
             },
         )
@@ -232,7 +233,7 @@ def revoke_legacy_task_tokens(v: Vault) -> None:
         data = info.json()["data"]
         is_task = any(p.startswith("space-") for p in data.get("policies") or [])
         # Non-renewable task tokens live creation_ttl; the role caps new ones at 600s.
-        uncapped = data.get("creation_ttl", 0) > 600
+        uncapped = data.get("creation_ttl", 0) > 2700
         if is_task and uncapped:
             v.req("POST", "auth/token/revoke-accessor", {"accessor": acc})
             revoked += 1
@@ -404,6 +405,11 @@ async def configure_nats(port: int, admin_password: str, all_spaces: list[str]) 
     except nats.js.errors.NotFoundError:
         await js.add_stream(config)
     for s in all_spaces:
+        durable = f"ingest-{dns(s)}"
+        with contextlib.suppress(nats.js.errors.NotFoundError):
+            info = await js.consumer_info(STREAM, durable)
+            if info.config.ack_wait != 2400:
+                await js.delete_consumer(STREAM, durable)  # dev: recreate on config change
         await js.add_consumer(
             STREAM,
             ConsumerConfig(
@@ -411,7 +417,7 @@ async def configure_nats(port: int, admin_password: str, all_spaces: list[str]) 
                 filter_subject=f"kc.page.{s}",
                 ack_policy=AckPolicy.EXPLICIT,
                 max_ack_pending=1,  # one ingest at a time per space
-                ack_wait=600,
+                ack_wait=2400,  # longer than a task (runner timeout 1800s)
                 max_deliver=5,
             ),
         )

@@ -10,7 +10,7 @@ from kc_labels import Labels, SpaceId
 from kc_store.space import SourcePage
 from kc_store.testing import fake_attachment_id
 
-TESTSET = Path(__file__).parents[3] / "tests/fixtures/synthetic_litho_testset"
+TESTSET = Path(__file__).parents[1] / "fixtures/synthetic_litho_testset"
 MANIFEST = json.loads((TESTSET / "manifest.json").read_text())
 GOLD = json.loads((TESTSET / "gold/slides.json").read_text())
 

@@ -9,6 +9,8 @@ COPY packages packages
 COPY services services
 
 FROM base AS app
+# Public, company-wide reading guides and glossary (read-only at run time).
+COPY schema /app/schema
 RUN uv sync --frozen --no-dev --package sync --package ingest-worker --package model-gateway
 ENV PATH=/app/.venv/bin:$PATH
 USER 65532:65532

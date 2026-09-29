@@ -1,9 +1,8 @@
 import pytest
+from testset import GOLD, MANIFEST, load_page
 
 from ingest_worker.steps.parse import ImageSegment, IncludeRef, TextSegment, course_id, parse_page
 from kc_labels import Labels
-
-from .fixtures import GOLD, MANIFEST, load_page
 
 PAGES = [p["page_id"] for p in MANIFEST["pages"]]
 

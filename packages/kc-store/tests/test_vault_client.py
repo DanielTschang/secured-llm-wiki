@@ -13,4 +13,4 @@ def test_child_token_requests_short_ttl() -> None:
     v = VaultClient(httpx.Client(transport=httpx.MockTransport(handler), base_url="http://v"), "t")
     assert v.child_token("space-sp_opc") == "child"
     assert seen[0][0] == "/v1/auth/token/create/space-sp_opc"
-    assert b'"ttl":"5m"' in seen[0][1].replace(b" ", b"")
+    assert b'"ttl":"30m"' in seen[0][1].replace(b" ", b"")

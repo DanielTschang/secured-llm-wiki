@@ -35,7 +35,7 @@ class Runner(Protocol):
     def run(self, event: PageEvent, token: str) -> TaskResult: ...
 
 
-MODEL_ENV = ("KC_MODEL_BASE_URL", "KC_MODEL_NAME", "KC_MODEL_ALLOWED_HOSTS")
+MODEL_ENV = ("KC_MODEL_BASE_URL", "KC_MODEL_NAME", "KC_MODEL_ALLOWED_HOSTS", "KC_SCHEMA_DIR")
 
 
 def task_env(
@@ -62,7 +62,7 @@ class LocalRunner:
         vault_addr: str,
         mongo_host: str,
         command: list[str] | None = None,
-        timeout: float = 600,
+        timeout: float = 1800,
         ready_timeout: float = READY_TIMEOUT,
     ) -> None:
         self._vault_addr = vault_addr
@@ -121,7 +121,7 @@ def _readline(stream: IO[str], timeout: float) -> str:
 class SocketRunner:
     """Broker-side client for the runner container."""
 
-    def __init__(self, path: Path, timeout: float = 900) -> None:
+    def __init__(self, path: Path, timeout: float = 2000) -> None:
         self._path = path
         self._timeout = timeout
 

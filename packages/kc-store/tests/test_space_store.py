@@ -195,3 +195,23 @@ def test_revision_taken_by_orphan_object(
     blobs.put_if_absent("pages/opc_o2/1/page.md", b"orphan from a crashed write")
     with pytest.raises(RevisionTaken):
         store(parts).put_source_page(page(1), "v1", {})
+
+
+def test_slide_notes_fenced_and_labelled(
+    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
+) -> None:
+    s = store(parts)
+    pid = PageId("opc_o2")
+    s.put_slide_note("opc_o2#1", pid, Revision(2), Labels.of([OPC]), "ok", {"point": "p"})
+    s.put_slide_note("opc_o2#2", pid, Revision(2), Labels.of([OPC]), "failed", None)
+    with pytest.raises(StaleWrite):
+        s.put_slide_note("opc_o2#1", pid, Revision(2), Labels.of([OPC]), "ok", {"point": "again"})
+    with pytest.raises(WrongSpace):
+        s.put_slide_note("opc_o2#3", pid, Revision(2), Labels.of([OPC, CD]), "ok", {})
+    notes = s.slide_notes(pid)
+    assert [(n["slide_ref"], n["status"], n["revision"]) for n in notes] == [
+        ("opc_o2#1", "ok", 2),
+        ("opc_o2#2", "failed", 2),
+    ]
+    s.put_slide_note("opc_o2#1", pid, Revision(3), Labels.of([OPC]), "ok", {"point": "v3"})
+    assert s.slide_notes(pid)[0]["body"] == {"point": "v3"}

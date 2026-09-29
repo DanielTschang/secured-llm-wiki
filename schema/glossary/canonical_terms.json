@@ -1,0 +1,112 @@
+[
+  {
+    "id": "concept:process_window",
+    "aliases": [
+      "製程窗口",
+      "process window"
+    ]
+  },
+  {
+    "id": "concept:bossung_curve",
+    "aliases": [
+      "Bossung curve"
+    ]
+  },
+  {
+    "id": "concept:best_focus",
+    "aliases": [
+      "最佳焦距",
+      "best focus"
+    ]
+  },
+  {
+    "id": "concept:iso_dense_bias",
+    "aliases": [
+      "dense/iso 差異",
+      "iso-dense bias"
+    ]
+  },
+  {
+    "id": "concept:dof",
+    "aliases": [
+      "DOF",
+      "焦深",
+      "depth of focus"
+    ]
+  },
+  {
+    "id": "concept:exposure_latitude",
+    "aliases": [
+      "曝光寬容度",
+      "EL",
+      "exposure latitude"
+    ]
+  },
+  {
+    "id": "concept:meef",
+    "aliases": [
+      "MEEF",
+      "光罩誤差放大因子",
+      "mask error enhancement factor"
+    ]
+  },
+  {
+    "id": "concept:overlay",
+    "aliases": [
+      "overlay",
+      "對位誤差"
+    ]
+  },
+  {
+    "id": "concept:magnification_error",
+    "aliases": [
+      "放大誤差",
+      "magnification"
+    ]
+  },
+  {
+    "id": "concept:opc",
+    "aliases": [
+      "OPC",
+      "光學鄰近修正"
+    ]
+  },
+  {
+    "id": "concept:serif",
+    "aliases": [
+      "serif"
+    ]
+  },
+  {
+    "id": "concept:hammerhead",
+    "aliases": [
+      "hammerhead"
+    ]
+  },
+  {
+    "id": "concept:hotspot",
+    "aliases": [
+      "hotspot"
+    ]
+  },
+  {
+    "id": "concept:opc_model_calibration",
+    "aliases": [
+      "模型校正",
+      "model calibration"
+    ]
+  },
+  {
+    "id": "concept:cdu",
+    "aliases": [
+      "CDU",
+      "CD uniformity"
+    ]
+  },
+  {
+    "id": "concept:bridging",
+    "aliases": [
+      "bridging"
+    ]
+  }
+]

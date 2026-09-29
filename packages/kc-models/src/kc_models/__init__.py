@@ -21,6 +21,7 @@ __all__ = [
     "Message",
     "ModelError",
     "OpenAICompatibleBackend",
+    "Part",
     "TextPart",
     "VisionModel",
     "from_env",

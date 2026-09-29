@@ -54,6 +54,7 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -p no:cacheprovider"
+pythonpath = [".", "tests/support"]  # shared test support: `import testset`
 markers = [
     "leak: application-layer leak tests (zero tolerance)",
     "infra: infrastructure leak tests; require the local kind cluster",
@@ -83,6 +84,7 @@ strict = ["packages/*/src", "services/*/src"]
 pythonVersion = "3.14"
 include = ["packages", "services", "tests"]
 exclude = ["tests/fixtures", "**/.venv"]
+extraPaths = ["tests/support"]
 venvPath = "."
 venv = ".venv"
 

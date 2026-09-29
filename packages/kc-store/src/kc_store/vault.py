@@ -42,7 +42,7 @@ class VaultClient:
             raise VaultError(resp.status_code)
         return resp.json() if resp.content else {}
 
-    def child_token(self, token_role: str, ttl: str = "5m") -> str:
+    def child_token(self, token_role: str, ttl: str = "30m") -> str:
         """A token from a token role (the broker mints single-space task tokens this way).
         The role also caps it with an explicit max TTL."""
         return self._call("POST", f"auth/token/create/{token_role}", {"ttl": ttl})["auth"][

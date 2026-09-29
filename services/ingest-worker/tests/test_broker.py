@@ -22,6 +22,7 @@ ALLOWED = {
     "KC_MODEL_BASE_URL",
     "KC_MODEL_NAME",
     "KC_MODEL_ALLOWED_HOSTS",
+    "KC_SCHEMA_DIR",
 }
 
 

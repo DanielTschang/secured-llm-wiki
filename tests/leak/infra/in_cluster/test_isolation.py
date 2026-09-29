@@ -167,15 +167,15 @@ def test_task_token_is_short_lived_single_space_and_revocable(broker: VaultClien
     task = broker.with_token(broker.child_token(f"space-{OPC}"))
     info = task.lookup_self()
     assert info["policies"] == [f"space-{OPC}"], info["policies"]
-    assert 0 < info["ttl"] <= 300, info["ttl"]
+    assert 0 < info["ttl"] <= 1800, info["ttl"]
     assert info["orphan"] is True
     # Non-renewable, so creation_ttl is the whole lifetime. (The role's max TTL caps it;
     # the token's own explicit_max_ttl field stays 0.)
     assert info["renewable"] is False
-    assert info["creation_ttl"] <= 300, info["creation_ttl"]
+    assert info["creation_ttl"] <= 1800, info["creation_ttl"]
     # Even asking for more, the broker cannot get a token that outlives the role's cap.
     greedy = broker.with_token(broker.child_token(f"space-{OPC}", ttl="72h"))
-    assert greedy.lookup_self()["creation_ttl"] <= 600
+    assert greedy.lookup_self()["creation_ttl"] <= 2700
     greedy.revoke_self()
     task.hmac(OPC, "AAAA")  # positive control: usable before revocation
     task.revoke_self()
