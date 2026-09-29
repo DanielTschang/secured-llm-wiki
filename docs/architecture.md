@@ -213,6 +213,7 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 
 ## 16. 已知缺口
 
+- **M2 判讀品質未達完成標準**：qwen2.5vl:7b 在 `gold/slides.json` 上圖型分類 13/14、數值在容差內 10/21、`numbers_from_figure` 9/10（`make eval`）。抄寫類讀值（截圖、印出的數字）大多正確；需從圖形目測估計的數值（最佳焦距、DOF、MEEF 斜率、向量比例尺）仍不準。後續以更大的模型或圖片放大／切塊改善，並以 `make eval` 驗證。
 - **per-space 內容加密暫時移除**（ADR-012）：MinIO 物件與 MongoDB 欄位目前為明文，能讀取儲存層的人可讀到內容；跨 space 隔離仍由 per-space 憑證強制。**上線前必須恢復，最晚 M6。**
 - **M1–M5 不處理頁面刪除與搬移**：頁面刪除或搬到更嚴格的 space 後，舊內容仍留在原 space wiki。M6 必須完成，否則不得上線。
 - **ingest 的 space 隔離為程式與行程層級**（ADR-006）：防程式 bug，不防 ingest-worker 主行程被入侵。
