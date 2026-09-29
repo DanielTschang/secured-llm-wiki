@@ -171,4 +171,25 @@ def test_alias_in_the_evidence_is_enough() -> None:
         model, RES, ["concept:meef"], local_concept=lambda _n: "x", cache_salt=SALT,
         evidence="contact layer 的光罩誤差放大因子實測偏高",
     )  # fmt: skip
-    assert got == {"concept:meef": "concept:meef"}
+    assert set(got.values()) == {"concept:meef"}
+
+
+def test_glossary_aliases_found_in_the_evidence_are_added() -> None:
+    """Deterministic: a public glossary alias that appears in the slides is a concept even
+    if the model did not list it."""
+    model = FakeModel(lambda _m, _t: '{"mappings": []}')
+    got = align_concepts(
+        model, RES, [], local_concept=lambda _n: "x", cache_salt=SALT,
+        evidence="## 4. Contact layer 的光罩誤差放大因子\n可用的 DOF 由窗口決定。",
+    )  # fmt: skip
+    assert set(got.values()) == {"concept:meef", "concept:dof"}
+    assert model.calls == []
+
+
+def test_latin_aliases_need_word_boundaries() -> None:
+    model = FakeModel(lambda _m, _t: '{"mappings": []}')
+    got = align_concepts(
+        model, RES, [], local_concept=lambda _n: "x", cache_salt=SALT,
+        evidence="PROOF 與 DOFFSET 都不是 DOF 的縮寫",  # only the standalone DOF counts
+    )  # fmt: skip
+    assert set(got.values()) == {"concept:dof"}

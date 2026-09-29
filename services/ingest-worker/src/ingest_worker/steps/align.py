@@ -5,6 +5,7 @@ ID or "none". "none" becomes the space's own local concept. The glossary is read
 nothing here can add to it (a new term there would tell everyone a space uses it).
 """
 
+import re
 import unicodedata
 from collections.abc import Callable, Sequence
 
@@ -19,6 +20,23 @@ __all__ = ["align_concepts", "normalise"]
 
 def normalise(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).lower().split())
+
+
+def _aliases_in(text: str, res: Resources) -> list[tuple[str, str]]:
+    norm = normalise(text)
+    found: list[tuple[str, str]] = []
+    for cid, aliases in res.glossary:
+        for alias in aliases:
+            a = normalise(alias)
+            if not a:
+                continue
+            if a.isascii():
+                hit = re.search(rf"(?<![a-z0-9]){re.escape(a)}(?![a-z0-9])", norm) is not None
+            else:
+                hit = a in norm
+            if hit:
+                found.append((alias, cid))
+    return found
 
 
 class _Mapping(BaseModel):
@@ -63,6 +81,11 @@ def align_concepts(
 
     out: dict[str, str] = {}
     unknown: list[str] = []
+    if evidence is not None:
+        # Public glossary aliases that literally appear in this space's slides count too,
+        # whether or not the model listed them (deterministic; no new input).
+        for alias, cid in _aliases_in(evidence, res):
+            out.setdefault(alias, cid)
     for name in dict.fromkeys(names):
         cid = alias_index.get(normalise(name))
         if cid is not None:
