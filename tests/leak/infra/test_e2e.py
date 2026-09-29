@@ -72,7 +72,8 @@ def wait_ingested(
     ports: dict[str, int], expected: dict[str, set[str]]
 ) -> dict[str, dict[str, int]]:
     """Wait until every page's ingest run matches its stored revision."""
-    deadline = time.monotonic() + 180
+    # Real model calls (three spaces share one on-host model server): allow time.
+    deadline = time.monotonic() + 1800
     while True:
         revisions: dict[str, dict[str, int]] = {}
         done = True
@@ -87,7 +88,7 @@ def wait_ingested(
                     pid not in pages
                     or run is None
                     or run["revision"] != pages[pid]
-                    or run["status"] != "stub_done"
+                    or run["status"] not in {"read_done", "read_partial"}
                 ):
                     done = False
         if done:
@@ -236,3 +237,20 @@ def test_no_task_token_outlives_its_task(ports: dict[str, int]) -> None:
         ):
             live.append((data["policies"], data["ttl"]))
     assert live == [], live
+
+
+def test_every_slide_has_a_note_labelled_with_its_space(ports: dict[str, int]) -> None:
+    """M2: after ingest, each page has one slide note per slide, in its own space only."""
+    wait_ingested(ports, expected_pages())
+    notes_seen = ok = 0
+    for meta in load_manifest()["pages"]:
+        db = space_db(ports, meta["space_id"])
+        notes = list(db["slide_notes"].find({"page_id": meta["page_id"]}))
+        assert len(notes) == meta["slide_count"], meta["page_id"]
+        for n in notes:
+            assert n["labels"] == [meta["space_id"]]
+            assert n["_id"].startswith(meta["page_id"] + "#")
+            ok += n["status"] == "ok"
+        notes_seen += len(notes)
+    assert notes_seen == sum(p["slide_count"] for p in load_manifest()["pages"])
+    assert ok >= notes_seen * 0.8, f"only {ok}/{notes_seen} notes ok"
