@@ -1,41 +1,37 @@
-"""Subprocess entry for one ingest task. Holds only its space's child token."""
+"""Subprocess entry for one ingest task. Holds only its space's child token.
 
-import contextlib
+Order matters: the process makes itself non-dumpable first, then tells the runner it is
+ready, and only then receives the token on stdin. Heavy imports come after, so there is
+no window in which a sibling process could read the token through /proc.
+"""
+
 import os
 import sys
 
-import httpx
+from ingest_worker.hardening import READY, harden_process
 
-from ingest_worker.broker import EXIT_DONE, EXIT_STALE
-from ingest_worker.pipeline import Quarantined, Stale, stub_ingest
-from kc_ids import PageId, Revision
-from kc_labels import SpaceId
-from kc_obs import configure_logging, get_logger
-from kc_store.context import open_space
-from kc_store.vault import VaultClient
-
-log = get_logger("ingest_task")
-
-_PR_SET_DUMPABLE = 4
-
-
-def harden_process() -> None:
-    """Make this process non-dumpable: its /proc/<pid>/environ, mem and fds become
-    unreadable to other processes of the same UID (e.g. a concurrent task of another
-    space). No-op off Linux."""
-    if sys.platform != "linux":
-        return
-    import ctypes
-
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
-        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE) failed")
+__all__ = ["harden_process", "main"]
 
 
 def main() -> int:
     harden_process()
-    token = sys.stdin.readline().strip()  # never from the environment
+    print(READY, flush=True)
+    token = sys.stdin.readline().strip()  # only now, and never from the environment
+
+    import contextlib
+
+    import httpx
+
+    from ingest_worker.broker import EXIT_DONE, EXIT_STALE
+    from ingest_worker.pipeline import Quarantined, Stale, stub_ingest
+    from kc_ids import PageId, Revision
+    from kc_labels import SpaceId
+    from kc_obs import configure_logging, get_logger
+    from kc_store.context import open_space
+    from kc_store.vault import VaultClient
+
     configure_logging()
+    log = get_logger("ingest_task")
     space = SpaceId(os.environ["KC_SPACE_ID"])
     page_id = PageId(os.environ["KC_PAGE_ID"])
     revision = Revision(int(os.environ["KC_REVISION"]))
@@ -54,8 +50,12 @@ def main() -> int:
         return 1
     finally:
         # The token is useless after this task; do not leave it valid until its TTL.
-        with contextlib.suppress(Exception):
+        try:
             vault.revoke_self()
+        except Exception as e:
+            log.error("token_revoke_failed", space_id=space, page_id=page_id, error=e)
+        with contextlib.suppress(Exception):
+            vault.close()
     log.info("task_done", space_id=space, page_id=page_id, revision=int(revision))
     return EXIT_DONE
 

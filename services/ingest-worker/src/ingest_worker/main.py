@@ -13,6 +13,7 @@ import nats
 from nats.js import JetStreamContext
 
 from ingest_worker.broker import Decision, Launcher, decide
+from ingest_worker.hardening import harden_process
 from ingest_worker.runner import SocketRunner
 from kc_labels import SpaceId
 from kc_obs import configure_logging, get_logger
@@ -69,6 +70,7 @@ async def consume(js: JetStreamContext, space: SpaceId, launcher: Launcher) -> N
 
 
 async def amain() -> None:
+    harden_process()  # the broker holds the ServiceAccount token and its Vault login
     configure_logging()
     spaces = [SpaceId(s) for s in os.environ["KC_SPACES"].split(",")]
     vault_addr = os.environ.get("KC_VAULT_ADDR", "http://kc-vault:8200")

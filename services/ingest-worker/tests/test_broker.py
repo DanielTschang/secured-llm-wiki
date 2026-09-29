@@ -41,16 +41,24 @@ def test_task_env_is_allow_listed_and_has_no_token() -> None:
 
 
 def dump_cmd(out: Path) -> list[str]:
-    """A task stand-in that records its env and the token it received on stdin."""
+    """A task stand-in that reports ready (as a hardened task does), then records its env
+    and the token it received on stdin."""
     code = (
-        "import os,sys,json;"
+        "import os,sys,json;print('ready',flush=True);"
         f"open({str(out)!r},'w').write(json.dumps({{'env':dict(os.environ),'stdin':sys.stdin.read()}}))"
     )
     return [sys.executable, "-c", code]
 
 
 def local(cmd: list[str], timeout: float = 30) -> LocalRunner:
-    return LocalRunner(vault_addr="http://v", mongo_host="m:1", command=cmd, timeout=timeout)
+    return LocalRunner(
+        vault_addr="http://v", mongo_host="m:1", command=cmd, timeout=timeout, ready_timeout=3
+    )
+
+
+def task_cmd(body: str) -> list[str]:
+    """A task stand-in that reports ready first, as the real task does."""
+    return [sys.executable, "-c", f"print('ready', flush=True); {body}"]
 
 
 def test_launcher_mints_single_space_token_and_passes_it_on_stdin(
@@ -74,12 +82,12 @@ def test_launcher_mints_single_space_token_and_passes_it_on_stdin(
     ("code", "result"), [(0, TaskResult.DONE), (3, TaskResult.STALE), (1, TaskResult.FAILED)]
 )
 def test_exit_codes(code: int, result: TaskResult) -> None:
-    runner = local([sys.executable, "-c", f"raise SystemExit({code})"])
+    runner = local(task_cmd(f"raise SystemExit({code})"))
     assert Launcher(FakeBrokerVault(), runner).run(EVENT) is result
 
 
 def test_timeout_kills_task() -> None:
-    runner = local([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+    runner = local(task_cmd("import time; time.sleep(30)"), timeout=0.5)
     assert Launcher(FakeBrokerVault(), runner).run(EVENT) is TaskResult.FAILED
 
 
@@ -137,6 +145,16 @@ def short_socket_path() -> Path:
     import uuid
 
     return Path("/tmp") / f"kc-{uuid.uuid4().hex[:8]}.sock"
+
+
+def test_token_withheld_until_task_reports_ready(tmp_path: Path) -> None:
+    """The token is written only after the task has hardened itself and said so; a task
+    that never reports ready never receives it."""
+    out = tmp_path / "stdin"
+    code = f"import sys;open({str(out)!r},'w').write(sys.stdin.read())"  # no ready line
+    result = Launcher(FakeBrokerVault(), local([sys.executable, "-c", code], timeout=5)).run(EVENT)
+    assert result is TaskResult.FAILED
+    assert out.read_text() == ""
 
 
 class StubLauncher:

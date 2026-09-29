@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from ingest_worker.task import harden_process
+from ingest_worker.hardening import harden_process
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="prctl is Linux-only; verified in-cluster")

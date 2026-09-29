@@ -11,10 +11,12 @@ import os
 import socketserver
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import Protocol
+from typing import IO, Protocol
 
 from ingest_worker.broker import EXIT_STALE, TaskResult
+from ingest_worker.hardening import READY, harden_process
 from kc_events import PageEvent
 from kc_obs import configure_logging, get_logger
 
@@ -24,6 +26,7 @@ log = get_logger("ingest_runner")
 
 TASK_COMMAND = [sys.executable, "-m", "ingest_worker.task"]
 SOCKET = Path(os.environ.get("KC_RUNNER_SOCKET", "/run/kc/runner.sock"))
+READY_TIMEOUT = 60.0
 
 
 class Runner(Protocol):
@@ -52,37 +55,56 @@ class LocalRunner:
         mongo_host: str,
         command: list[str] | None = None,
         timeout: float = 600,
+        ready_timeout: float = READY_TIMEOUT,
     ) -> None:
         self._vault_addr = vault_addr
         self._mongo_host = mongo_host
         self._command = command or TASK_COMMAND
         self._timeout = timeout
+        self._ready_timeout = ready_timeout
 
     def run(self, event: PageEvent, token: str) -> TaskResult:
         env = task_env(event, vault_addr=self._vault_addr, mongo_host=self._mongo_host)
+        # stderr passes through (the task logs only via kc_obs: IDs and numbers).
+        proc = subprocess.Popen(  # noqa: S603
+            self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        )
+        if proc.stdin is None or proc.stdout is None:  # pragma: no cover - Popen contract
+            raise RuntimeError("task pipes missing")
         try:
-            # stdout/stderr pass through: the task logs only via kc_obs (IDs and numbers).
-            proc = subprocess.run(  # noqa: S603
-                self._command,
-                env=env,
-                input=token + "\n",
-                text=True,
-                timeout=self._timeout,
-                check=False,
-            )
+            # Hand over the token only after the task has made itself non-dumpable.
+            if _readline(proc.stdout, self._ready_timeout).strip() != READY:
+                proc.kill()
+                proc.wait()
+                log.error("task_not_ready", space_id=event.space_id, page_id=event.page_id)
+                return TaskResult.FAILED
+            proc.stdin.write(token + "\n")
+            proc.stdin.close()
+            threading.Thread(target=proc.stdout.read, daemon=True).start()  # drain
+            code = proc.wait(timeout=self._timeout)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
             log.error("task_timeout", space_id=event.space_id, page_id=event.page_id)
             return TaskResult.FAILED
-        match proc.returncode:
+        match code:
             case 0:
                 return TaskResult.DONE
-            case code if code == EXIT_STALE:
+            case c if c == EXIT_STALE:
                 return TaskResult.STALE
-            case code:
+            case c:
                 log.error(
-                    "task_failed", space_id=event.space_id, page_id=event.page_id, exit_code=code
+                    "task_failed", space_id=event.space_id, page_id=event.page_id, exit_code=c
                 )
                 return TaskResult.FAILED
+
+
+def _readline(stream: IO[str], timeout: float) -> str:
+    line: list[str] = []
+    reader = threading.Thread(target=lambda: line.append(stream.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    return line[0] if line else ""
 
 
 class SocketRunner:
@@ -145,6 +167,7 @@ def serve(path: Path, runner: Runner) -> socketserver.UnixStreamServer:
 
 
 def main() -> None:
+    harden_process()  # the runner holds every in-flight task token
     configure_logging()
     runner = LocalRunner(
         vault_addr=os.environ.get("KC_VAULT_ADDR", "http://kc-vault:8200"),

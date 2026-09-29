@@ -220,4 +220,7 @@ M4、M5 只提供 API；讀者介面另立里程碑。
 - **MinIO 社群版**已進入維護模式，正式環境 object store 待定。社群版已不再發佈 image，開發環境改由 `deploy/images/minio/` 從固定的 release tag 原始碼建置。
 - **MinIO 的 per-space 憑證是長效靜態金鑰**（M1）：每個 space 一個只能存取自己 bucket 的 MinIO user，金鑰放在 Vault KV 該 space 的路徑下；不像 MongoDB 動態憑證會自動過期。改用短效憑證（例如 STS）需視正式環境的 object store 而定。
 - **開發環境的 Vault 為 dev mode**：資料在記憶體中，Vault 重啟即遺失所有 transit 金鑰，已加密的開發資料無法再解密，需 `make kind-down && make kind-up` 重建。正式環境改用叢集外 KMS。
+- **ingest 任務子行程被入侵時的跨 space 路徑**（ADR-011，提議中）：runner 與任務同 UID、共用 socket 目錄，被入侵的任務可以攔截其他 space 的子 token。**M2 開始解析文件前必須決定並實作 ADR-011。**
+- **quarantine 前已產生的衍生物**：頁面在 ingest 之後才被設為受限時，之後不再 ingest，但既有的衍生物（graph 節點、ingest 紀錄，M3 起的 wiki 頁）仍留著；M6 必須一併清除。
+- **手動觸發的 sync 不受 CronJob 的 `concurrencyPolicy` 限制**：兩個 sync 並行時，較舊的抓取可能暫時覆蓋較新的內容（僅同一 space 內，下次 sync 自我修復）；M6 以 per-space lease 處理。
 - **開發環境的基礎元件初始密碼出現在 Helm values**：MongoDB root 與 Neo4j 密碼在 bootstrap 後立即輪替、新值只存在 Vault；MinIO root 未輪替。Helm release（k8s Secret）會保存這些 dev 初始值與 NATS／client secret 的雜湊，不含任何 space 金鑰。

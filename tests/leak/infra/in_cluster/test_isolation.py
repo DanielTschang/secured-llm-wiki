@@ -194,7 +194,7 @@ def test_sibling_task_cannot_read_hardened_task_environment(hardened: bool) -> N
     import time
 
     prelude = (
-        "from ingest_worker.task import harden_process; harden_process(); " if hardened else ""
+        "from ingest_worker.hardening import harden_process; harden_process(); " if hardened else ""
     )
     victim = subprocess.Popen(
         [sys.executable, "-c", prelude + "import time; time.sleep(30)"],

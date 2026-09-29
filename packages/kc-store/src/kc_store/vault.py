@@ -55,6 +55,9 @@ class VaultClient:
     def revoke_self(self) -> None:
         self._call("POST", "auth/token/revoke-self")
 
+    def close(self) -> None:
+        self._http.close()
+
     def with_token(self, token: str) -> VaultClient:
         return VaultClient(self._http, token)
 
