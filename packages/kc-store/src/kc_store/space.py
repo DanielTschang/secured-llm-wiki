@@ -221,6 +221,13 @@ class SpaceStore:
 
     # --- course pages --------------------------------------------------------------
 
+    def list_all_source_pages(self) -> list[SourcePage]:
+        return [
+            p
+            for d in self._docs.find("source_pages", {})
+            if (p := self.get_source_page(PageId(d["_id"]))) is not None
+        ]
+
     def list_source_pages(self, parent_id: str) -> list[SourcePage]:
         """This space's pages of one course (same platform parent), in page-id order."""
         docs = self._docs.find("source_pages", {"parent_id": parent_id})

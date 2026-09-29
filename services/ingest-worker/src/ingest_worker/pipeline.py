@@ -1,14 +1,15 @@
 """Ingest pipeline for one page of one space. Reaches data only through SpaceContext
 (ADR-006) and the model only through kc_models; never opens connections itself.
 
-M2: step 1 (parse slides) and step 2 (read slides). Steps 3-7 follow in M3.
+Steps 1-2 per page (parse, read slides); steps 3-7 per course (steps/course.py).
 """
 
-from ingest_worker.steps.parse import course_id, parse_page
+from ingest_worker.steps.course import build_course
+from ingest_worker.steps.parse import parse_page
 from ingest_worker.steps.read import CourseContext, Resources, as_json, read_slide
 from kc_graph import StaleGraphWrite
 from kc_ids import PageId, Revision
-from kc_models import VisionModel
+from kc_models import EmbeddingModel, VisionModel
 from kc_store.context import SpaceContext
 from kc_store.space import StaleWrite
 
@@ -26,7 +27,14 @@ class Quarantined(Exception):
 
 
 def ingest_page(
-    ctx: SpaceContext, model: VisionModel, res: Resources, page_id: PageId, revision: Revision
+    ctx: SpaceContext,
+    model: VisionModel,
+    embedder: EmbeddingModel,
+    res: Resources,
+    page_id: PageId,
+    revision: Revision,
+    *,
+    model_id: str,
 ) -> None:
     # Checked before reading any content, even for pages stored before the restriction.
     if ctx.store.is_quarantined(page_id):
@@ -75,7 +83,11 @@ def ingest_page(
             previous = note.body.point
             terms.extend(c for c in note.body.concepts if c not in terms)
         ctx.graph.upsert_source_page(page_id, revision, page.labels)
-        ctx.store.record_ingest_run(page_id, revision, "read_partial" if failed else "read_done")
+        # Steps 3-7 for the course this page belongs to (same space only).
+        wiki_ok = build_course(
+            ctx, model, embedder, res, page, cache_salt=cache_salt, model_id=model_id
+        )
+        status = "read_partial" if failed else ("wiki_done" if wiki_ok else "wiki_partial")
+        ctx.store.record_ingest_run(page_id, revision, status)
     except (StaleWrite, StaleGraphWrite) as e:
         raise Stale from e
-    _ = course_id(page)  # course grouping is used from step 3 (M3)

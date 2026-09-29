@@ -42,7 +42,16 @@ def main() -> int:
     try:
         with open_space(space, vault) as ctx:
             resources = Resources.load(Path(os.environ["KC_SCHEMA_DIR"]))
-            ingest_page(ctx, model_from_env(), resources, page_id, revision)
+            model = model_from_env()
+            ingest_page(
+                ctx,
+                model,
+                model_from_env("KC_EMBED_MODEL_NAME"),
+                resources,
+                page_id,
+                revision,
+                model_id=os.environ["KC_MODEL_NAME"],
+            )
     except Stale:
         log.info("task_stale", space_id=space, page_id=page_id, revision=int(revision))
         return EXIT_STALE
