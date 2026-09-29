@@ -20,6 +20,7 @@ sync:
 # upstreamIP is the only address the gateway may connect to (set by `make deploy`).
 model:
   name: qwen2.5vl:7b
+  embedName: bge-m3
   upstreamIP: ""
   upstreamPort: 11434
 

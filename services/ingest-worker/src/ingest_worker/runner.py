@@ -35,7 +35,13 @@ class Runner(Protocol):
     def run(self, event: PageEvent, token: str) -> TaskResult: ...
 
 
-MODEL_ENV = ("KC_MODEL_BASE_URL", "KC_MODEL_NAME", "KC_MODEL_ALLOWED_HOSTS", "KC_SCHEMA_DIR")
+MODEL_ENV = (
+    "KC_MODEL_BASE_URL",
+    "KC_MODEL_NAME",
+    "KC_EMBED_MODEL_NAME",
+    "KC_MODEL_ALLOWED_HOSTS",
+    "KC_SCHEMA_DIR",
+)
 
 
 def task_env(

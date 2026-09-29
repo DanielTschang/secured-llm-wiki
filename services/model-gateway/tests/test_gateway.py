@@ -54,8 +54,8 @@ def test_forwards_request_and_returns_only_the_content() -> None:
     assert json.loads(seen[0].content) == BODY
 
 
-@pytest.mark.parametrize("path", ["/v1/models", "/api/pull", "/v1/embeddings", "/admin"])
-def test_only_chat_completions_is_exposed(path: str) -> None:
+@pytest.mark.parametrize("path", ["/v1/models", "/api/pull", "/api/generate", "/admin"])
+def test_only_chat_and_embeddings_are_exposed(path: str) -> None:
     seen: list[httpx.Request] = []
     assert client(seen).post(path, json={}).status_code == 404
     assert seen == []
@@ -94,3 +94,26 @@ def test_upstream_client_ignores_proxy_environment(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
     monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
     assert upstream_client("http://192.168.65.254:11434/v1")._trust_env is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_embeddings_return_only_vectors() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.path == "/v1/embeddings"
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": "bge-m3",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.5, 0.25]}],
+                "usage": {"prompt_tokens": 9, "total_tokens": 9},
+            },
+        )
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://192.168.65.254:11434/v1"
+    )
+    resp = TestClient(create_app(http)).post(
+        "/v1/embeddings", json={"model": "bge-m3", "input": ["KESTREL"]}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"data": [{"embedding": [0.5, 0.25]}]}

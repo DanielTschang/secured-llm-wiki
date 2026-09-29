@@ -99,3 +99,41 @@ def test_default_client_ignores_proxy_environment(monkeypatch: pytest.MonkeyPatc
         "http://kc-model-gateway:8080/v1", "m", allowed_hosts=frozenset({"kc-model-gateway"})
     )
     assert b._http._trust_env is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_embed_request_and_parsing() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = str(req.url)
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(
+            200, json={"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]}
+        )
+
+    b = OpenAICompatibleBackend(
+        "http://kc-model-gateway:8080/v1",
+        "bge-m3",
+        allowed_hosts=frozenset({"kc-model-gateway"}),
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert b.embed(["甲", "乙"]) == [[0.1, 0.2], [0.3, 0.4]]
+    assert seen["url"] == "http://kc-model-gateway:8080/v1/embeddings"
+    assert seen["body"] == {"model": "bge-m3", "input": ["甲", "乙"]}
+
+
+def test_embed_count_mismatch_is_model_error() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"embedding": [0.1]}]})
+
+    b = backend(httpx.MockTransport(handler))
+    with pytest.raises(ModelError):
+        b.embed(["a", "b"])
+
+
+def test_fake_embeddings_are_deterministic_and_recorded() -> None:
+    fake = FakeModel(lambda _m, _t: "{}")
+    a = fake.embed(["MEEF 門檻"], tag="x")
+    assert a == fake.embed(["MEEF 門檻"]) and a != fake.embed(["DOF"])
+    assert len(a[0]) == 16
+    assert fake.embedded == ["MEEF 門檻", "MEEF 門檻", "DOF"]

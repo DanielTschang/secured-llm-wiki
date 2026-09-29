@@ -100,6 +100,7 @@ spec:
             - { name: KC_RUNNER_SPACE, value: {{ .id | quote }} }
             - { name: KC_MODEL_BASE_URL, value: "http://kc-model-gateway:8080/v1" }
             - { name: KC_MODEL_NAME, value: {{ $.Values.model.name | quote }} }
+            - { name: KC_EMBED_MODEL_NAME, value: {{ $.Values.model.embedName | quote }} }
             - { name: KC_MODEL_ALLOWED_HOSTS, value: kc-model-gateway }
             - { name: KC_SCHEMA_DIR, value: /app/schema }
             - { name: KC_RUNNER_SOCKET_ROOT, value: /run/kc }

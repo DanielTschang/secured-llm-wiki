@@ -1,9 +1,9 @@
 """model-gateway: the single in-cluster door to the on-prem model server.
 
-Exposes only POST /v1/chat/completions and forwards it verbatim to the configured
-upstream. Request and response bodies are never logged (they are space content); logs
-carry the status and duration only. Network policy lets only ingest reach it, and lets
-it reach only the model server.
+Exposes only POST /v1/chat/completions and POST /v1/embeddings, forwards them to the
+configured upstream and returns only the text or the vectors. Request and response
+bodies are never logged (they are space content); logs carry the status and duration
+only. Network policy lets only ingest reach it, and lets it reach only the model server.
 """
 
 import os
@@ -52,6 +52,32 @@ def create_app(upstream: httpx.AsyncClient) -> FastAPI:
         # Only the text. usage (incl. cached-token counts), ids and fingerprints describe
         # shared model-server state and would let one space probe another's prompts.
         return JSONResponse({"choices": [{"message": {"content": content}}]})
+
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request) -> Response:
+        body = await request.body()
+        start = time.monotonic()
+        try:
+            resp = await upstream.post(
+                "/embeddings", content=body, headers={"Content-Type": "application/json"}
+            )
+        except httpx.HTTPError as e:
+            log.error("embed_call", status=0, error=e)
+            return Response(status_code=502)
+        log.info(
+            "embed_call",
+            status=resp.status_code,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+        if resp.status_code != 200:
+            return Response(status_code=502)
+        try:
+            vectors = [[float(x) for x in d["embedding"]] for d in resp.json()["data"]]
+        except Exception as e:
+            log.error("embed_call_unparseable", status=resp.status_code, error=e)
+            return Response(status_code=502)
+        # Only the vectors: usage, model and ids describe shared model-server state.
+        return JSONResponse({"data": [{"embedding": v} for v in vectors]})
 
     return app
 

@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 __all__ = [
+    "EmbeddingModel",
     "FakeModel",
     "ImagePart",
     "Message",
@@ -52,6 +53,10 @@ class ModelError(Exception):
     def __init__(self, status: int = 0) -> None:
         super().__init__(f"model call failed ({status})")  # never the body
         self.status = status
+
+
+class EmbeddingModel(Protocol):
+    def embed(self, texts: Sequence[str], *, tag: str = "") -> list[list[float]]: ...
 
 
 class VisionModel(Protocol):
@@ -95,12 +100,29 @@ class OpenAICompatibleBackend:
         ):
             raise ValueError("model endpoint not allowed")
         self._url = base_url.rstrip("/") + "/chat/completions"
+        self._embed_url = base_url.rstrip("/") + "/embeddings"
         self._model = model
         # trust_env=False: proxy variables must never divert prompts past the allowlist.
         self._http = http or httpx.Client(timeout=timeout, trust_env=False)
 
     def __repr__(self) -> str:
         return f"OpenAICompatibleBackend(model={self._model!r})"
+
+    @property
+    def http(self) -> httpx.Client:
+        return self._http
+
+    @property
+    def embed_url(self) -> str:
+        return self._embed_url
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def embed(self, texts: Sequence[str], *, tag: str = "") -> list[list[float]]:
+        """OpenAI-compatible /embeddings. `tag` is an ID for fakes and logs."""
+        return _embed(self, texts)
 
     def chat(
         self,
@@ -131,6 +153,24 @@ class OpenAICompatibleBackend:
             raise ModelError(resp.status_code) from e
 
 
+def _embed(backend: OpenAICompatibleBackend, texts: Sequence[str]) -> list[list[float]]:
+    try:
+        resp = backend.http.post(
+            backend.embed_url, json={"model": backend.model, "input": list(texts)}
+        )
+    except httpx.HTTPError as e:
+        raise ModelError(0) from e
+    if resp.status_code != 200:
+        raise ModelError(resp.status_code)
+    try:
+        vectors = [[float(x) for x in d["embedding"]] for d in resp.json()["data"]]
+    except Exception as e:
+        raise ModelError(resp.status_code) from e
+    if len(vectors) != len(texts):
+        raise ModelError(resp.status_code)
+    return vectors
+
+
 @dataclass(frozen=True, slots=True)
 class Call:
     messages: Sequence[Message]
@@ -148,6 +188,18 @@ class FakeModel:
     def __init__(self, script: Callable[[Sequence[Message], str], str]) -> None:
         self._script = script
         self.calls: list[Call] = []
+        self.embedded: list[str] = []
+
+    def embed(self, texts: Sequence[str], *, tag: str = "") -> list[list[float]]:
+        """Deterministic 16-dim vectors from a hash of each text."""
+        import hashlib
+
+        self.embedded.extend(texts)
+        out: list[list[float]] = []
+        for t in texts:
+            digest = hashlib.sha256(t.encode()).digest()
+            out.append([(b - 128) / 128 for b in digest[:16]])
+        return out
 
     def chat(
         self,
@@ -160,10 +212,11 @@ class FakeModel:
         return self._script(messages, tag)
 
 
-def from_env() -> OpenAICompatibleBackend:
-    """KC_MODEL_BASE_URL, KC_MODEL_NAME, KC_MODEL_ALLOWED_HOSTS (comma-separated)."""
+def from_env(model_var: str = "KC_MODEL_NAME") -> OpenAICompatibleBackend:
+    """KC_MODEL_BASE_URL, KC_MODEL_ALLOWED_HOSTS (comma-separated) and the model name from
+    `model_var` (KC_MODEL_NAME for chat, KC_EMBED_MODEL_NAME for embeddings)."""
     return OpenAICompatibleBackend(
         os.environ["KC_MODEL_BASE_URL"],
-        os.environ["KC_MODEL_NAME"],
+        os.environ[model_var],
         allowed_hosts=frozenset(h for h in os.environ["KC_MODEL_ALLOWED_HOSTS"].split(",") if h),
     )
