@@ -10,7 +10,8 @@ apps:
   enabled: false
 
 # Dev only: lets the in-cluster isolation test runner (tests/leak/infra) reach storage.
-devTestRunner: true
+# Off by default; `make deploy` turns it on for the local kind cluster.
+devTestRunner: false
 
 sync:
   schedule: "*/15 * * * *"

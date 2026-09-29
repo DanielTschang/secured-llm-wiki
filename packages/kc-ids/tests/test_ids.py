@@ -1,6 +1,6 @@
 import pytest
 
-from kc_ids import AttachmentId, PageId, Revision, attachment_id_for
+from kc_ids import AttachmentId, PageId, Revision, attachment_id_from_digest
 
 
 @pytest.mark.parametrize("raw", ["opc_o1", "cd_d1", "12345", "Page-7"])
@@ -15,13 +15,13 @@ def test_invalid_page_ids(raw: str) -> None:
     assert "KESTREL" not in str(exc.value)
 
 
-def test_attachment_id_is_content_hash_not_filename() -> None:
-    a = attachment_id_for(b"\x89PNG...")
-    assert a.startswith("att_") and len(a) == 20
-    assert a == attachment_id_for(b"\x89PNG...")
-    assert a != attachment_id_for(b"\x89PNG!!!")
+def test_attachment_id_from_keyed_digest_not_filename() -> None:
+    a = attachment_id_from_digest("0123456789abcdef" * 4)
+    assert a == "att_0123456789abcdef"
     with pytest.raises(ValueError):
         AttachmentId("o2_rules_2025.png")
+    with pytest.raises(ValueError):
+        attachment_id_from_digest("not hex at all!!")
 
 
 @pytest.mark.parametrize("raw", [0, -1, True, 1.0, "1"])

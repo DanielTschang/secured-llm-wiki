@@ -69,11 +69,12 @@ forbidden_modules =
 allow_indirect_imports = True
 
 [importlinter:contract:broker-never-reads-content]
-name = ingest broker (main process) cannot reach space content, even indirectly
+name = ingest broker and runner cannot reach space content, even indirectly
 type = forbidden
 source_modules =
     ingest_worker.broker
     ingest_worker.main
+    ingest_worker.runner
 forbidden_modules =
     kc_store.space
     kc_store.context

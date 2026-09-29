@@ -110,7 +110,33 @@ def test_task_credentials_are_single_space_in_cluster() -> None:
             time.sleep(3)
         logs = kubectl("-n", NAMESPACE, "logs", f"job/{name}", check=False)
         assert " passed" in logs, logs
-        assert status == "1/", logs
+        assert status == "1/", logs  # succeeded/failed
         assert " failed" not in logs and " skipped" not in logs and " error" not in logs, logs
     finally:
         kubectl("-n", NAMESPACE, "delete", "job", name, "--wait=false", check=False)
+
+
+def test_runner_container_has_no_broker_credentials() -> None:
+    """Tasks run in the runner container: no ServiceAccount token, no view of the broker."""
+    if not local_cluster_ok():
+        pytest.skip("local cluster not available")
+    check = (
+        "import os,pathlib;"
+        "print('SA_TOKEN', os.path.exists('/var/run/secrets/kc/vault-token'));"
+        "sa='/var/run/secrets/kubernetes.io/serviceaccount/token';"
+        "print('SA_DEFAULT', os.path.exists(sa));"
+        "procs=pathlib.Path('/proc').glob('[0-9]*');"
+        "cmds=[pathlib.Path(p,'cmdline').read_bytes() for p in procs];"
+        # Build the needles at run time so this probe's own command line cannot match.
+        "m=b'ingest_worker'+b'.main';r=b'ingest_worker'+b'.runner';"
+        "print('SEES_BROKER', any(m in c for c in cmds));"
+        "print('SEES_RUNNER', any(r in c for c in cmds))"
+    )
+    out = kubectl(
+        "-n", NAMESPACE, "exec", "deploy/kc-ingest-worker", "-c", "runner", "--",
+        "python", "-c", check,
+    )  # fmt: skip
+    assert "SEES_RUNNER True" in out, out  # positive control: the probe works
+    assert "SA_TOKEN False" in out, out
+    assert "SA_DEFAULT False" in out, out
+    assert "SEES_BROKER False" in out, out

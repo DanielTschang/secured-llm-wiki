@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from ingest_worker.broker import Decision, Launcher, TaskResult, decide, task_env
+from ingest_worker.broker import Decision, Launcher, TaskResult, decide
+from ingest_worker.runner import LocalRunner, SocketRunner, serve, task_env
 from kc_events import PageEvent
 
 EVENT = PageEvent.of(space_id="sp_opc", page_id="opc_o1", revision=2)
 ALLOWED = {
     "KC_VAULT_ADDR",
-    "KC_VAULT_TOKEN",
     "KC_SPACE_ID",
     "KC_PAGE_ID",
     "KC_REVISION",
@@ -31,35 +31,42 @@ class FakeBrokerVault:
         return f"child-for-{token_role}"
 
 
-def test_task_env_is_allow_listed() -> None:
-    env = task_env(EVENT, vault_addr="http://kc-vault:8200", child_token="child", mongo_host="m:1")
+def test_task_env_is_allow_listed_and_has_no_token() -> None:
+    env = task_env(EVENT, vault_addr="http://kc-vault:8200", mongo_host="m:1")
     assert set(env) <= ALLOWED
     assert env["KC_SPACE_ID"] == "sp_opc"
     assert env["KC_PAGE_ID"] == "opc_o1"
     assert env["KC_REVISION"] == "2"
-    assert env["KC_VAULT_TOKEN"] == "child"
+    assert not any("TOKEN" in k for k in env)
 
 
-def test_launcher_mints_single_space_token_and_isolates_env(
+def dump_cmd(out: Path) -> list[str]:
+    """A task stand-in that records its env and the token it received on stdin."""
+    code = (
+        "import os,sys,json;"
+        f"open({str(out)!r},'w').write(json.dumps({{'env':dict(os.environ),'stdin':sys.stdin.read()}}))"
+    )
+    return [sys.executable, "-c", code]
+
+
+def local(cmd: list[str], timeout: float = 30) -> LocalRunner:
+    return LocalRunner(vault_addr="http://v", mongo_host="m:1", command=cmd, timeout=timeout)
+
+
+def test_launcher_mints_single_space_token_and_passes_it_on_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KC_BROKER_VAULT_TOKEN", "broker-secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "leaked?")
-    out = tmp_path / "env.json"
+    out = tmp_path / "task.json"
     vault = FakeBrokerVault()
-    cmd = [
-        sys.executable,
-        "-c",
-        f"import os,json;open({str(out)!r},'w').write(json.dumps(dict(os.environ)))",
-    ]
-    launcher = Launcher(vault, vault_addr="http://v", mongo_host="m:1", command=cmd, timeout=30)
-    assert launcher.run(EVENT) is TaskResult.DONE
+    assert Launcher(vault, local(dump_cmd(out))).run(EVENT) is TaskResult.DONE
     assert vault.roles == ["space-sp_opc"]
-    child_env = json.loads(out.read_text())
-    assert set(child_env) - {"__CF_USER_TEXT_ENCODING", "LC_CTYPE"} <= ALLOWED
-    assert child_env["KC_VAULT_TOKEN"] == "child-for-space-sp_opc"
-    assert "broker-secret" not in json.dumps(child_env)
-    assert "leaked?" not in json.dumps(child_env)
+    seen = json.loads(out.read_text())
+    assert set(seen["env"]) - {"__CF_USER_TEXT_ENCODING", "LC_CTYPE"} <= ALLOWED
+    assert seen["stdin"].strip() == "child-for-space-sp_opc"
+    assert "child-for" not in json.dumps(seen["env"])  # never in the environment
+    assert "broker-secret" not in json.dumps(seen) and "leaked?" not in json.dumps(seen)
     assert os.environ["KC_BROKER_VAULT_TOKEN"] == "broker-secret"  # parent untouched
 
 
@@ -67,25 +74,69 @@ def test_launcher_mints_single_space_token_and_isolates_env(
     ("code", "result"), [(0, TaskResult.DONE), (3, TaskResult.STALE), (1, TaskResult.FAILED)]
 )
 def test_exit_codes(code: int, result: TaskResult) -> None:
-    cmd = [sys.executable, "-c", f"raise SystemExit({code})"]
-    launcher = Launcher(FakeBrokerVault(), vault_addr="v", mongo_host="m", command=cmd, timeout=30)
-    assert launcher.run(EVENT) is result
+    runner = local([sys.executable, "-c", f"raise SystemExit({code})"])
+    assert Launcher(FakeBrokerVault(), runner).run(EVENT) is result
 
 
 def test_timeout_kills_task() -> None:
-    cmd = [sys.executable, "-c", "import time; time.sleep(30)"]
-    launcher = Launcher(FakeBrokerVault(), vault_addr="v", mongo_host="m", command=cmd, timeout=0.5)
-    assert launcher.run(EVENT) is TaskResult.FAILED
+    runner = local([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+    assert Launcher(FakeBrokerVault(), runner).run(EVENT) is TaskResult.FAILED
 
 
-def test_token_failure_is_failure_without_spawn() -> None:
+def test_token_failure_is_failure_without_spawn(tmp_path: Path) -> None:
     class Denied(FakeBrokerVault):
         def child_token(self, token_role: str) -> str:
             raise PermissionError
 
-    cmd = [sys.executable, "-c", "raise SystemExit(0)"]
-    launcher = Launcher(Denied(), vault_addr="v", mongo_host="m", command=cmd, timeout=5)
-    assert launcher.run(EVENT) is TaskResult.FAILED
+    out = tmp_path / "ran"
+    runner = local([sys.executable, "-c", f"open({str(out)!r},'w')"])
+    assert Launcher(Denied(), runner).run(EVENT) is TaskResult.FAILED
+    assert not out.exists()
+
+
+def test_socket_runner_roundtrip(tmp_path: Path) -> None:
+    """Broker and runner live in different containers and talk over a unix socket."""
+    import threading
+
+    out = tmp_path / "task.json"
+    sock = short_socket_path()
+    server = serve(sock, local(dump_cmd(out)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert Launcher(FakeBrokerVault(), SocketRunner(sock)).run(EVENT) is TaskResult.DONE
+        assert json.loads(out.read_text())["stdin"].strip() == "child-for-space-sp_opc"
+    finally:
+        server.shutdown()
+
+
+def test_runner_rejects_malformed_requests(tmp_path: Path) -> None:
+    import socket
+    import threading
+
+    ran = tmp_path / "ran"
+    sock = short_socket_path()
+    server = serve(sock, local([sys.executable, "-c", f"open({str(ran)!r},'w')"]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for bad in (
+            b"garbage\n",
+            b'{"space_id":"sp_opc"}\n',
+            b'{"space_id":"OPC","page_id":"x","revision":1,"token":"t"}\n',
+        ):
+            with socket.socket(socket.AF_UNIX) as c:
+                c.connect(str(sock))
+                c.sendall(bad)
+                assert json.loads(c.makefile().readline())["result"] == "failed"
+        assert not ran.exists()
+    finally:
+        server.shutdown()
+
+
+def short_socket_path() -> Path:
+    # AF_UNIX paths are limited to ~104 bytes on macOS; pytest's tmp_path is longer.
+    import uuid
+
+    return Path("/tmp") / f"kc-{uuid.uuid4().hex[:8]}.sock"
 
 
 class StubLauncher:

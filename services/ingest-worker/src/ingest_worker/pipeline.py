@@ -9,14 +9,21 @@ from kc_ids import PageId, Revision
 from kc_store.context import SpaceContext
 from kc_store.space import StaleWrite
 
-__all__ = ["Stale", "stub_ingest"]
+__all__ = ["Quarantined", "Stale", "stub_ingest"]
 
 
 class Stale(Exception):
     """A newer revision exists or this revision was already ingested; nothing to do."""
 
 
+class Quarantined(Exception):
+    """The page is quarantined (page-level restriction, ADR-001); never ingest it."""
+
+
 def stub_ingest(ctx: SpaceContext, page_id: PageId, revision: Revision) -> None:
+    # Checked before reading any content, even for pages stored before the restriction.
+    if ctx.store.is_quarantined(page_id):
+        raise Quarantined
     page = ctx.store.get_source_page(page_id)
     if page is None or page.revision < revision:
         raise LookupError("source page revision not stored yet")

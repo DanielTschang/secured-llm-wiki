@@ -159,3 +159,72 @@ def test_no_content_in_any_pod_log() -> None:
     for p in load_manifest()["pages"]:
         for a in p["attachments"]:
             assert a.rsplit("/", 1)[1] not in logs, "attachment filename in pod logs"
+
+
+def test_no_content_in_any_database_field(ports: dict[str, int]) -> None:
+    """Everything in each space's database is IDs, numbers, dates or ciphertext."""
+    from bson import json_util
+
+    seen = 0
+    for space in SPACES:
+        db = space_db(ports, space)
+        for coll in db.list_collection_names():
+            for doc in db[coll].find():
+                assert_no_content(json_util.dumps(doc))
+                seen += 1
+    assert seen >= 10  # positive control: 5 source pages + 5 ingest runs at least
+
+
+def test_no_task_token_outlives_its_task(ports: dict[str, int]) -> None:
+    """Force a real task (replay an already-ingested event), then check that no
+    single-space token minted since is still valid: the task revoked its own."""
+    import asyncio
+
+    import nats
+
+    from kc_events import PageEvent
+
+    http = httpx.Client(
+        base_url=f"http://127.0.0.1:{ports['vault']}/v1/", headers={"X-Vault-Token": ROOT_TOKEN}
+    )
+    wait_ingested(ports, expected_pages())
+    # Vault's own clock, so host/cluster skew cannot hide tokens.
+    marker = http.post("auth/token/create", json={"ttl": "1m", "policies": ["default"]}).json()
+    t0 = http.post("auth/token/lookup", json={"token": marker["auth"]["client_token"]}).json()[
+        "data"
+    ]["creation_time"]
+    http.post("auth/token/revoke", json={"token": marker["auth"]["client_token"]})
+
+    def finished() -> int:
+        logs = kubectl("-n", NAMESPACE, "logs", "deploy/kc-ingest-worker", "-c", "broker")
+        return logs.count('"task_finished", "space_id": "sp_opc", "page_id": "opc_o1"')
+
+    before = finished()
+    nats_password = http.get("kv/data/nats/sync").json()["data"]["data"]["password"]
+    event = PageEvent.of(space_id="sp_opc", page_id="opc_o1", revision=1)
+
+    async def replay(port: int) -> None:
+        nc = await nats.connect(f"nats://127.0.0.1:{port}", user="sync", password=nats_password)
+        try:
+            await nc.jetstream().publish(event.subject, event.to_bytes(), timeout=5)
+        finally:
+            await nc.close()
+
+    with port_forward("kc-nats", 4222) as nats_port:
+        asyncio.run(replay(nats_port))
+    deadline = time.monotonic() + 120
+    while finished() == before:  # positive control: a task really ran
+        assert time.monotonic() < deadline, "replayed task did not run"
+        time.sleep(2)
+
+    live = []
+    for acc in http.request("LIST", "auth/token/accessors").json()["data"]["keys"]:
+        info = http.post("auth/token/lookup-accessor", json={"accessor": acc})
+        if info.status_code != 200:
+            continue
+        data = info.json()["data"]
+        if data["creation_time"] >= t0 and any(
+            p.startswith("space-") for p in data.get("policies") or []
+        ):
+            live.append((data["policies"], data["ttl"]))
+    assert live == [], live

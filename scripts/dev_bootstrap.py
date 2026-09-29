@@ -103,13 +103,27 @@ class Vault:
         self.req("PUT", f"sys/policies/acl/{name}", {"policy": hcl})
 
 
-def space_policy(space: str) -> str:
+def storage_policy(space: str) -> str:
+    """Encrypt/decrypt, keyed digests, database and object store for one space."""
     return f"""
 path "transit/datakey/plaintext/{space}" {{ capabilities = ["update"] }}
 path "transit/decrypt/{space}" {{ capabilities = ["update"] }}
+path "transit/hmac/{space}/*" {{ capabilities = ["update"] }}
 path "database/creds/{space}" {{ capabilities = ["read"] }}
-path "kv/data/spaces/{space}/*" {{ capabilities = ["read"] }}
+path "kv/data/spaces/{space}/s3" {{ capabilities = ["read"] }}
 """
+
+
+def space_policy(space: str) -> str:
+    """An ingest task for one space: its storage, its graph, and its own token."""
+    return (
+        storage_policy(space)
+        + f"""
+path "kv/data/spaces/{space}/neo4j" {{ capabilities = ["read"] }}
+path "auth/token/lookup-self" {{ capabilities = ["read"] }}
+path "auth/token/revoke-self" {{ capabilities = ["update"] }}
+"""
+    )
 
 
 def configure_vault(v: Vault, all_spaces: list[str]) -> None:
@@ -162,14 +176,15 @@ def configure_vault(v: Vault, all_spaces: list[str]) -> None:
                 "allowed_policies": [f"space-{s}"],
                 "orphan": True,
                 "renewable": False,
-                "token_ttl": "5m",
-                "token_max_ttl": "10m",
+                # Hard cap; the broker also requests ttl=5m. (Token roles have no token_ttl.)
+                "token_explicit_max_ttl": "10m",
                 "token_no_default_policy": True,
             },
         )
     v.policy(
         "sync",
-        "".join(space_policy(s) for s in all_spaces)
+        # Sync stores every space's pages but never touches a graph.
+        "".join(storage_policy(s) for s in all_spaces)
         + '\npath "kv/data/platform/svc_sync" { capabilities = ["read"] }'
         + '\npath "kv/data/nats/sync" { capabilities = ["read"] }\n',
     )
@@ -203,24 +218,60 @@ def configure_vault(v: Vault, all_spaces: list[str]) -> None:
                 "token_no_default_policy": True,
             },
         )
+    revoke_legacy_task_tokens(v)
     log("vault configured")
+
+
+def revoke_legacy_task_tokens(v: Vault) -> None:
+    """Task tokens minted before the TTL cap existed (32-day default) must not survive."""
+    resp = v.req("LIST", "auth/token/accessors")
+    keys = resp.json().get("data", {}).get("keys", []) if resp.status_code == 200 else []
+    revoked = 0
+    for acc in keys:
+        info = v.req("POST", "auth/token/lookup-accessor", {"accessor": acc})
+        if info.status_code != 200:
+            continue
+        data = info.json()["data"]
+        is_task = any(p.startswith("space-") for p in data.get("policies") or [])
+        # Non-renewable task tokens live creation_ttl; the role caps new ones at 600s.
+        uncapped = data.get("creation_ttl", 0) > 600
+        if is_task and uncapped:
+            v.req("POST", "auth/token/revoke-accessor", {"accessor": acc})
+            revoked += 1
+    if revoked:
+        log(f"revoked {revoked} legacy task tokens")
 
 
 # --- MinIO ----------------------------------------------------------------------
 
 
 def bucket_policy(space: str) -> dict[str, Any]:
+    """Object operations on the space's own buckets only: no bucket policy, ACL or listing
+    of other buckets (a bug must not be able to make a bucket public)."""
     buckets = [f"kc-{dns(space)}-raw", f"kc-{dns(space)}-lance"]
     return {
         "Version": "2012-10-17",
         "Statement": [
             {
                 "Effect": "Allow",
-                "Action": ["s3:*"],
-                "Resource": [
-                    r for b in buckets for r in (f"arn:aws:s3:::{b}", f"arn:aws:s3:::{b}/*")
+                "Action": [
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                    "s3:ListBucketMultipartUploads",
                 ],
-            }
+                "Resource": [f"arn:aws:s3:::{b}" for b in buckets],
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:AbortMultipartUpload",
+                    "s3:ListMultipartUploadParts",
+                ],
+                "Resource": [f"arn:aws:s3:::{b}/*" for b in buckets],
+            },
         ],
     }
 

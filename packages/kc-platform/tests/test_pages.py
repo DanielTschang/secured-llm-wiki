@@ -202,3 +202,14 @@ def test_client_credentials_failure_is_unavailable() -> None:
     )
     with pytest.raises(PlatformUnavailable):
         creds()
+
+
+def test_missing_restricted_flag_fails_closed() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        page = {k: v for k, v in _page_json().items() if k != "restricted"}
+        return httpx.Response(200, json={"pages": [page]})
+
+    [p] = PagesClient(_client(httpx.MockTransport(handler)), service_token="svc").get_pages(
+        "sp_opc"
+    )
+    assert p.restricted

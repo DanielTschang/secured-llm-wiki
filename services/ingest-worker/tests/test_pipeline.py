@@ -5,11 +5,11 @@ import pytest
 from ingest_worker.pipeline import Stale, stub_ingest
 from kc_graph import SpaceGraph
 from kc_graph.testing import MemoryGraph
-from kc_ids import PageId, Revision, attachment_id_for
+from kc_ids import PageId, Revision
 from kc_labels import Labels, SpaceId
 from kc_store.context import SpaceContext
 from kc_store.space import SourcePage, SpaceStore, WrongSpace
-from kc_store.testing import FakeKeyService, MemoryBlobs, MemoryDocs
+from kc_store.testing import FakeKeyService, MemoryBlobs, MemoryDocs, fake_attachment_id
 
 OPC = SpaceId("sp_opc")
 PID = PageId("opc_o1")
@@ -20,7 +20,7 @@ PNG = b"\x89PNG"
 def ctx() -> SpaceContext:
     store = SpaceStore(OPC, keys=FakeKeyService(), docs=MemoryDocs(), blobs=MemoryBlobs())
     graph = SpaceGraph(OPC, MemoryGraph())
-    att = attachment_id_for(PNG)
+    att = fake_attachment_id(PNG)
     store.put_source_page(
         SourcePage(
             page_id=PID,
@@ -70,3 +70,13 @@ def test_missing_page_fails(ctx: SpaceContext) -> None:
 def test_foreign_labels_abort(ctx: SpaceContext) -> None:
     with pytest.raises(WrongSpace):
         ctx.assert_single_space([Labels.of(["sp_opc", "sp_cd"])])
+
+
+def test_quarantined_page_is_not_ingested(ctx: SpaceContext) -> None:
+    from ingest_worker.pipeline import Quarantined
+
+    ctx.store.quarantine(PID)
+    with pytest.raises(Quarantined):
+        stub_ingest(ctx, PID, Revision(2))
+    assert ctx.store.ingest_run(PID) is None
+    assert ctx.graph.source_page_revision(PID) is None

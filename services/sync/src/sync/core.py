@@ -5,18 +5,17 @@ raw form (never the rendered one, which may have other spaces' includes expanded
 and publishes. It never interprets content.
 """
 
-import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
 from kc_events import PageEvent
-from kc_ids import AttachmentId, PageId, Revision, attachment_id_for
+from kc_ids import AttachmentId, PageId, Revision
 from kc_labels import Labels, SpaceId
 from kc_obs import get_logger
 from kc_platform.pages import PageMeta, PagesClient
-from kc_store.space import SourcePage, SpaceStore, StaleWrite
+from kc_store.space import RevisionTaken, SourcePage, SpaceStore, StaleWrite
 
 __all__ = ["SyncReport", "sync_space"]
 
@@ -46,11 +45,19 @@ class SyncReport:
     publish_failed: int = 0
 
 
-def content_hash(markdown: str, attachment_map: tuple[tuple[str, AttachmentId], ...]) -> str:
-    h = hashlib.sha256(markdown.encode())
-    h.update(b"\0")
-    h.update(json.dumps(sorted([n, str(a)] for n, a in attachment_map)).encode())
-    return h.hexdigest()
+MAX_REVISION_SKIPS = 5
+
+
+def content_hash(
+    store: SpaceStore, markdown: str, attachment_map: tuple[tuple[str, AttachmentId], ...]
+) -> str:
+    """Keyed with the space's key, so it cannot be matched against outside content."""
+    body = (
+        markdown.encode()
+        + b"\0"
+        + json.dumps(sorted([n, str(a)] for n, a in attachment_map)).encode()
+    )
+    return store.keyed_digest(body)
 
 
 def _publish(
@@ -75,8 +82,9 @@ def _sync_page(
     space: SpaceId, meta: PageMeta, pages: PagesClient, store: SpaceStore
 ) -> tuple[Outcome, Revision | None]:
     page_id = PageId(meta.page_id)
-    if meta.restricted:
+    if meta.restricted or store.is_quarantined(page_id):
         # Page-level restrictions are not modelled (ADR-001): isolate, never fetch content.
+        # Quarantine is sticky: lifting a restriction does not release the page.
         store.quarantine(page_id)
         return Outcome.QUARANTINED, None
 
@@ -93,34 +101,41 @@ def _sync_page(
     amap: list[tuple[str, AttachmentId]] = []
     for name in raw.attachment_names:
         data = pages.get_attachment(page_id, name)
-        att = attachment_id_for(data)
+        att = store.attachment_id(data)
         blobs[att] = data
         amap.append((name, att))
     attachment_map = tuple(amap)
-    digest = content_hash(raw.markdown, attachment_map)
+    digest = content_hash(store, raw.markdown, attachment_map)
 
     if current is not None and current.content_hash == digest:
         store.touch_updated_date(page_id, current.revision, meta.updated_date)
         return Outcome.TOUCHED, None
 
     revision = Revision(1 if current is None else int(current.revision) + 1)
-    store.put_source_page(
-        SourcePage(
-            page_id=page_id,
-            space_id=space,
-            revision=revision,
-            updated_date=raw.updated_date,
-            content_hash=digest,
-            title=raw.title,
-            parent_id=raw.parent_id,
-            attachment_ids=tuple(sorted(set(blobs))),
-            labels=Labels.of([space]),
-            attachment_map=attachment_map,
-        ),
-        raw.markdown,
-        blobs,
-    )
-    return (Outcome.NEW if current is None else Outcome.CHANGED), revision
+    for _ in range(MAX_REVISION_SKIPS):
+        try:
+            store.put_source_page(
+                SourcePage(
+                    page_id=page_id,
+                    space_id=space,
+                    revision=revision,
+                    updated_date=raw.updated_date,
+                    content_hash=digest,
+                    title=raw.title,
+                    parent_id=raw.parent_id,
+                    attachment_ids=tuple(sorted(set(blobs))),
+                    labels=Labels.of([space]),
+                    attachment_map=attachment_map,
+                ),
+                raw.markdown,
+                blobs,
+            )
+            return (Outcome.NEW if current is None else Outcome.CHANGED), revision
+        except RevisionTaken:
+            # A crashed earlier write left objects at this revision; objects are write-once.
+            log.warning("revision_taken", space_id=space, page_id=page_id, revision=int(revision))
+            revision = Revision(int(revision) + 1)
+    raise StaleWrite
 
 
 def sync_space(

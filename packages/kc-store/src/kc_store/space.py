@@ -10,17 +10,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from kc_ids import AttachmentId, PageId, Revision
+from kc_ids import AttachmentId, PageId, Revision, attachment_id_from_digest
 from kc_labels import Labels, SpaceId
 from kc_store.backends import BlobStore, DocStore
 from kc_store.envelope import ObjectRef, open_sealed, seal
 from kc_store.keys import KeyService
 
-__all__ = ["SourcePage", "SpaceStore", "StaleWrite", "WrongSpace"]
+__all__ = ["RevisionTaken", "SourcePage", "SpaceStore", "StaleWrite", "WrongSpace"]
 
 
 class StaleWrite(Exception):
     """The store already holds this revision or a newer one."""
+
+
+class RevisionTaken(StaleWrite):
+    """Objects for this revision exist but the document is older: a previous write
+    crashed half way. Retry with the next revision (objects are write-once)."""
 
 
 class WrongSpace(Exception):
@@ -74,6 +79,14 @@ class SpaceStore:
         doc = self._docs.get(collection, page_id)
         return 0 if doc is None else int(doc["revision"])
 
+    def keyed_digest(self, data: bytes) -> str:
+        """HMAC with this space's key, as hex. Used for content hashes and attachment IDs so
+        they cannot be matched against content from outside the space."""
+        return self._keys.hmac(self.space_id, data).hex()
+
+    def attachment_id(self, data: bytes) -> AttachmentId:
+        return attachment_id_from_digest(self.keyed_digest(data))
+
     # --- source pages ----------------------------------------------------------
 
     def put_source_page(
@@ -94,13 +107,13 @@ class SpaceStore:
         if not self._blobs.put_if_absent(
             self._md_key(page.page_id, rev), seal(self._keys, md_ref, markdown.encode())
         ):
-            raise StaleWrite
+            raise RevisionTaken
         for att, data in attachments.items():
             ref = self._ref("attachment", f"{page.page_id}/{att}", rev)
             if not self._blobs.put_if_absent(
                 self._att_key(page.page_id, rev, att), seal(self._keys, ref, data)
             ):
-                raise StaleWrite
+                raise RevisionTaken
 
         doc: dict[str, Any] = {
             "space_id": str(self.space_id),

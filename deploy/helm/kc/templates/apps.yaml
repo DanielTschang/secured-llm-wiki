@@ -53,8 +53,10 @@ spec:
             {{- include "kc.vaultTokenVolume" . | nindent 12 }}
             - { name: tmp, emptyDir: {} }
 ---
-# ingest-worker: one subprocess per task holding only that space's child token (ADR-006).
-# No platform access and no outbound path.
+# ingest-worker (ADR-006). Two containers, separate PID namespaces:
+#   broker: holds the ServiceAccount token, consumes NATS, mints single-space child tokens.
+#   runner: no ServiceAccount token; runs one subprocess per task, token passed on stdin.
+# They share only the socket directory. No platform access and no outbound path.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,21 +71,39 @@ spec:
     spec:
       serviceAccountName: kc-ingest-worker
       automountServiceAccountToken: false
+      shareProcessNamespace: false
       {{- include "kc.podSecurity" (dict) | nindent 6 }}
       containers:
-        - name: ingest-worker
+        - name: broker
           image: {{ .Values.images.app }}
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ingest_worker.main"]
           env:
             {{- include "kc.appEnv" . | nindent 12 }}
+            - { name: KC_RUNNER_SOCKET, value: /run/kc/runner.sock }
           {{- include "kc.containerSecurity" . | nindent 10 }}
           volumeMounts:
             - { name: vault-token, mountPath: /var/run/secrets/kc, readOnly: true }
-            - { name: tmp, mountPath: /tmp }
+            - { name: runner-socket, mountPath: /run/kc }
+            - { name: broker-tmp, mountPath: /tmp }
+        - name: runner
+          image: {{ .Values.images.app }}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ingest_worker.runner"]
+          env:
+            - { name: KC_VAULT_ADDR, value: "http://kc-vault:8200" }
+            - { name: KC_MONGO_HOST, value: "kc-mongodb:27017" }
+            - { name: KC_RUNNER_SOCKET, value: /run/kc/runner.sock }
+            - { name: HOME, value: /tmp }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: runner-socket, mountPath: /run/kc }
+            - { name: runner-tmp, mountPath: /tmp }
       volumes:
         {{- include "kc.vaultTokenVolume" . | nindent 8 }}
-        - { name: tmp, emptyDir: {} }
+        - { name: runner-socket, emptyDir: {} }
+        - { name: broker-tmp, emptyDir: {} }
+        - { name: runner-tmp, emptyDir: {} }
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

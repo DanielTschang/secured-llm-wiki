@@ -1,15 +1,23 @@
 """In-memory fakes for unit tests. Not for production use."""
 
 import base64
+import hashlib
+import hmac
 import os
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from kc_ids import AttachmentId, attachment_id_from_digest
 from kc_labels import SpaceId
 from kc_store.keys import KeyServiceError
 
-__all__ = ["FakeKeyService", "MemoryBlobs", "MemoryDocs"]
+__all__ = ["FakeKeyService", "MemoryBlobs", "MemoryDocs", "fake_attachment_id"]
+
+
+def fake_attachment_id(data: bytes) -> AttachmentId:
+    """Deterministic attachment ID for tests that do not care how IDs are keyed."""
+    return attachment_id_from_digest(hashlib.sha256(data).hexdigest())
 
 
 class FakeKeyService:
@@ -36,6 +44,9 @@ class FakeKeyService:
         nonce = os.urandom(12)
         wrapped = nonce + AESGCM(self._master(space_id)).encrypt(nonce, dek, space_id.encode())
         return dek, "fake:v1:" + base64.b64encode(wrapped).decode()
+
+    def hmac(self, space_id: SpaceId, data: bytes) -> bytes:
+        return hmac.new(self._master(space_id), data, hashlib.sha256).digest()
 
     def unwrap(self, space_id: SpaceId, wrapped: str) -> bytes:
         raw = base64.b64decode(wrapped.removeprefix("fake:v1:"))

@@ -13,11 +13,12 @@ import httpx
 import pytest
 
 from kc_graph import StaleGraphWrite
-from kc_ids import PageId, Revision, attachment_id_for
+from kc_ids import PageId, Revision
 from kc_labels import Labels, SpaceId
 from kc_store.context import Endpoints, SpaceContext, open_space
 from kc_store.envelope import DecryptError
 from kc_store.space import SourcePage, StaleWrite
+from kc_store.testing import fake_attachment_id
 from kc_store.vault import VaultClient, VaultError
 from tests.support.cluster import local_cluster_ok, port_forward
 
@@ -46,11 +47,25 @@ def ports() -> Iterator[dict[str, int]]:
         }
 
 
+MINTED: list[VaultClient] = []
+
+
 def task_vault(ports: dict[str, int], space: SpaceId) -> VaultClient:
-    """A single-space task token, minted the way the ingest broker does it."""
+    """A single-space task token, minted the way the ingest broker does it. Revoked at the
+    end of the module, like a real task revokes its token."""
     http = httpx.Client(base_url=f"http://127.0.0.1:{ports['vault']}")
     root = VaultClient(http, ROOT_TOKEN)
-    return root.with_token(root.child_token(f"space-{space}"))
+    task = root.with_token(root.child_token(f"space-{space}"))
+    MINTED.append(task)
+    return task
+
+
+@pytest.fixture(scope="module", autouse=True)
+def revoke_minted(ports: dict[str, int]) -> Iterator[None]:  # revoke before port-forward closes
+    yield
+    for task in MINTED:
+        task.revoke_self()
+    MINTED.clear()
 
 
 def endpoints(ports: dict[str, int], neo4j: str) -> Endpoints:
@@ -76,7 +91,7 @@ def page(page_id: PageId, rev: int, attachments: tuple[bytes, ...] = ()) -> Sour
         content_hash="0" * 64,
         title="OPC 實務入門（2025 版）",
         parent_id="opc_courses",
-        attachment_ids=tuple(attachment_id_for(a) for a in attachments),
+        attachment_ids=tuple(fake_attachment_id(a) for a in attachments),
         labels=Labels.of([OPC]),
     )
 
@@ -89,10 +104,10 @@ def test_roundtrip_and_encryption_at_rest(opc: SpaceContext, ports: dict[str, in
     pid = new_page_id()
     png = b"\x89PNG integration KESTREL"
     opc.store.put_source_page(
-        page(pid, 1, (png,)), "# KESTREL-7 設定", {attachment_id_for(png): png}
+        page(pid, 1, (png,)), "# KESTREL-7 設定", {fake_attachment_id(png): png}
     )
     assert opc.store.read_markdown(pid, Revision(1)) == "# KESTREL-7 設定"
-    assert opc.store.read_attachment(pid, Revision(1), attachment_id_for(png)) == png
+    assert opc.store.read_attachment(pid, Revision(1), fake_attachment_id(png)) == png
     got = opc.store.get_source_page(pid)
     assert got is not None and got.title == "OPC 實務入門（2025 版）"
 

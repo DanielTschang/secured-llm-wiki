@@ -42,9 +42,18 @@ class VaultClient:
             raise VaultError(resp.status_code)
         return resp.json() if resp.content else {}
 
-    def child_token(self, token_role: str) -> str:
-        """A token from a token role (the broker mints single-space task tokens this way)."""
-        return self._call("POST", f"auth/token/create/{token_role}")["auth"]["client_token"]
+    def child_token(self, token_role: str, ttl: str = "5m") -> str:
+        """A token from a token role (the broker mints single-space task tokens this way).
+        The role also caps it with an explicit max TTL."""
+        return self._call("POST", f"auth/token/create/{token_role}", {"ttl": ttl})["auth"][
+            "client_token"
+        ]
+
+    def lookup_self(self) -> dict[str, Any]:
+        return self._call("GET", "auth/token/lookup-self")["data"]
+
+    def revoke_self(self) -> None:
+        self._call("POST", "auth/token/revoke-self")
 
     def with_token(self, token: str) -> VaultClient:
         return VaultClient(self._http, token)
@@ -56,6 +65,11 @@ class VaultClient:
     def decrypt(self, key: str, ciphertext: str) -> str:
         return self._call("POST", f"transit/decrypt/{key}", {"ciphertext": ciphertext})["data"][
             "plaintext"
+        ]
+
+    def hmac(self, key: str, data_b64: str) -> str:
+        return self._call("POST", f"transit/hmac/{key}/sha2-256", {"input": data_b64})["data"][
+            "hmac"
         ]
 
     def kv(self, path: str) -> dict[str, Any]:
@@ -82,3 +96,9 @@ class VaultKeyService:
         import base64
 
         return base64.b64decode(self._vault.decrypt(space_id, wrapped))
+
+    def hmac(self, space_id: SpaceId, data: bytes) -> bytes:
+        import base64
+
+        out = self._vault.hmac(space_id, base64.b64encode(data).decode())  # "vault:v1:<b64>"
+        return base64.b64decode(out.rsplit(":", 1)[1])

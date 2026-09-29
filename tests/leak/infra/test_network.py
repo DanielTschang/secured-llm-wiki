@@ -221,6 +221,8 @@ def http(
         ("pages", "GET", "/api/spaces/sp_opc/pages", "404"),
         ("pages", "GET", "/api/pages/opc_o1/attachments/o1_residual.png", "404"),
         ("acl", "GET", "/api/me/spaces?x=1", "403"),
+        # Sync must never get the rendered form (it may contain other spaces' includes).
+        ("pages", "GET", "/api/pages/opc_o2?format=rendered", "403"),
         ("acl", "POST", "/dev/token", "403"),
         ("pages", "POST", "/dev/token", "403"),
     ],

@@ -2,10 +2,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from kc_ids import PageId, Revision, attachment_id_for
+from kc_ids import PageId, Revision
 from kc_labels import Labels, SpaceId
 from kc_store.space import SourcePage, SpaceStore, StaleWrite, WrongSpace
-from kc_store.testing import FakeKeyService, MemoryBlobs, MemoryDocs
+from kc_store.testing import FakeKeyService, MemoryBlobs, MemoryDocs, fake_attachment_id
 
 OPC = SpaceId("sp_opc")
 CD = SpaceId("sp_cd")
@@ -23,7 +23,7 @@ def page(rev: int = 1, space: SpaceId = OPC, updated: datetime = T1) -> SourcePa
         content_hash="h" * 64,
         title="OPC 實務入門（2025 版）",
         parent_id="opc_courses",
-        attachment_ids=(attachment_id_for(PNG),),
+        attachment_ids=(fake_attachment_id(PNG),),
         labels=Labels.of([space]),
     )
 
@@ -42,18 +42,18 @@ def store(
 
 def test_roundtrip(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs]) -> None:
     s = store(parts)
-    s.put_source_page(page(), "# md KESTREL", {attachment_id_for(PNG): PNG})
+    s.put_source_page(page(), "# md KESTREL", {fake_attachment_id(PNG): PNG})
     got = s.get_source_page(PageId("opc_o2"))
     assert got == page()
     assert s.read_markdown(PageId("opc_o2"), Revision(1)) == "# md KESTREL"
-    assert s.read_attachment(PageId("opc_o2"), Revision(1), attachment_id_for(PNG)) == PNG
+    assert s.read_attachment(PageId("opc_o2"), Revision(1), fake_attachment_id(PNG)) == PNG
 
 
 def test_content_is_encrypted_at_rest(
     parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
 ) -> None:
     _, docs, blobs = parts
-    store(parts).put_source_page(page(), "# md KESTREL", {attachment_id_for(PNG): PNG})
+    store(parts).put_source_page(page(), "# md KESTREL", {fake_attachment_id(PNG): PNG})
     assert "OPC 實務" not in repr(docs.dump())
     assert all(b"KESTREL" not in b and PNG not in b for b in blobs.dump().values())
     # Object keys are IDs only.
@@ -122,7 +122,7 @@ def test_undeclared_attachment_rejected(
     parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
 ) -> None:
     with pytest.raises(ValueError, match="attachment"):
-        store(parts).put_source_page(page(), "x", {attachment_id_for(b"other"): b"other"})
+        store(parts).put_source_page(page(), "x", {fake_attachment_id(b"other"): b"other"})
 
 
 def test_other_space_keys_cannot_read(
@@ -157,7 +157,7 @@ def test_attachment_names_stored_encrypted(
     from dataclasses import replace
 
     _, docs, _ = parts
-    att = attachment_id_for(PNG)
+    att = fake_attachment_id(PNG)
     p = replace(page(), attachment_map=(("o2_rules_2025.png", att),))
     store(parts).put_source_page(p, "x", {att: PNG})
     got = store(parts).get_source_page(PageId("opc_o2"))
@@ -170,7 +170,7 @@ def test_attachment_map_must_reference_declared_ids(
 ) -> None:
     from dataclasses import replace
 
-    p = replace(page(), attachment_map=(("x.png", attachment_id_for(b"undeclared")),))
+    p = replace(page(), attachment_map=(("x.png", fake_attachment_id(b"undeclared")),))
     with pytest.raises(ValueError, match="attachment"):
         store(parts).put_source_page(p, "x", {})
 
@@ -185,3 +185,27 @@ def test_publish_tracking(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs])
     assert s.unpublished_revision(PageId("opc_o2")) == 2
     with pytest.raises(StaleWrite):
         s.mark_published(PageId("opc_o2"), Revision(1))
+
+
+def test_keyed_digest_is_per_space(parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs]) -> None:
+    import hashlib
+
+    keys, docs, blobs = parts
+    opc = SpaceStore(OPC, keys=keys, docs=docs, blobs=blobs)
+    cd = SpaceStore(CD, keys=keys, docs=MemoryDocs(), blobs=MemoryBlobs())
+    d = opc.keyed_digest(PNG)
+    assert d == opc.keyed_digest(PNG)
+    assert d != cd.keyed_digest(PNG)  # same image in two spaces: unlinkable
+    assert d != hashlib.sha256(PNG).hexdigest()
+    assert opc.attachment_id(PNG).startswith("att_")
+
+
+def test_revision_taken_by_orphan_object(
+    parts: tuple[FakeKeyService, MemoryDocs, MemoryBlobs],
+) -> None:
+    from kc_store.space import RevisionTaken
+
+    _, _, blobs = parts
+    blobs.put_if_absent("pages/opc_o2/1/page.md", b"orphan from a crashed write")
+    with pytest.raises(RevisionTaken):
+        store(parts).put_source_page(page(1), "v1", {})

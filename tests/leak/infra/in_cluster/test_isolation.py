@@ -5,6 +5,7 @@ sp_cd's buckets, database, graph or keys. Every denial has a positive control on
 """
 
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import boto3
@@ -38,8 +39,10 @@ def broker(http: httpx.Client) -> VaultClient:
 
 
 @pytest.fixture(scope="module")
-def opc(broker: VaultClient) -> VaultClient:
-    return broker.with_token(broker.child_token(f"space-{OPC}"))
+def opc(broker: VaultClient) -> Iterator[VaultClient]:
+    task = broker.with_token(broker.child_token(f"space-{OPC}"))
+    yield task
+    task.revoke_self()
 
 
 def denied(call: object) -> None:
@@ -77,7 +80,8 @@ def test_broker_token_reads_no_space_data(broker: VaultClient, http: httpx.Clien
         headers={"X-Vault-Token": broker._token},  # pyright: ignore[reportPrivateUsage]
     )
     assert resp.status_code == 403
-    assert broker.child_token(f"space-{OPC}")  # positive control
+    probe = broker.with_token(broker.child_token(f"space-{OPC}"))  # positive control
+    probe.revoke_self()
 
 
 # --- object store ----------------------------------------------------------------------
@@ -156,3 +160,78 @@ def test_open_space_for_other_space_fails(opc: VaultClient) -> None:
         open_space(CD, opc)
     with open_space(OPC, opc) as ctx:  # positive control
         assert ctx.space_id == OPC
+
+
+# --- token lifetime (ADR-006: short-lived, single-space) ---------------------------------
+
+
+def test_task_token_is_short_lived_single_space_and_revocable(broker: VaultClient) -> None:
+    task = broker.with_token(broker.child_token(f"space-{OPC}"))
+    info = task.lookup_self()
+    assert info["policies"] == [f"space-{OPC}"], info["policies"]
+    assert 0 < info["ttl"] <= 300, info["ttl"]
+    assert info["orphan"] is True
+    # Non-renewable, so creation_ttl is the whole lifetime. (The role's max TTL caps it;
+    # the token's own explicit_max_ttl field stays 0.)
+    assert info["renewable"] is False
+    assert info["creation_ttl"] <= 300, info["creation_ttl"]
+    # Even asking for more, the broker cannot get a token that outlives the role's cap.
+    greedy = broker.with_token(broker.child_token(f"space-{OPC}", ttl="72h"))
+    assert greedy.lookup_self()["creation_ttl"] <= 600
+    greedy.revoke_self()
+    task.datakey(OPC)  # positive control: usable before revocation
+    task.revoke_self()
+    denied(lambda: task.datakey(OPC))
+
+
+# --- task processes cannot read each other (ADR-006, same UID in the runner) --------------
+
+
+@pytest.mark.parametrize("hardened", [True, False], ids=["hardened", "control"])
+def test_sibling_task_cannot_read_hardened_task_environment(hardened: bool) -> None:
+    import subprocess
+    import sys
+    import time
+
+    prelude = (
+        "from ingest_worker.task import harden_process; harden_process(); " if hardened else ""
+    )
+    victim = subprocess.Popen(
+        [sys.executable, "-c", prelude + "import time; time.sleep(30)"],
+        env={"KC_SECRET_PROBE": "sp_opc-token"},
+    )
+    try:
+        time.sleep(1)
+        environ = Path(f"/proc/{victim.pid}/environ")
+        if hardened:
+            with pytest.raises(PermissionError):
+                environ.read_bytes()
+            with pytest.raises(PermissionError):
+                Path(f"/proc/{victim.pid}/mem").open("rb").close()
+        else:
+            assert b"sp_opc-token" in environ.read_bytes()  # positive control
+    finally:
+        victim.kill()
+
+
+def test_space_user_cannot_administer_buckets(opc: VaultClient) -> None:
+    import json as _json
+
+    s3 = s3_for(opc, OPC)
+    public = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Effect": "Allow", "Principal": "*", "Action": ["s3:GetObject"],
+             "Resource": ["arn:aws:s3:::kc-sp-opc-lance/*"]}
+        ],
+    }  # fmt: skip
+    # Listing is allowed but filtered: other spaces' bucket names are not revealed.
+    names = {b.get("Name") for b in s3.list_buckets().get("Buckets", [])}
+    assert names == {"kc-sp-opc-raw", "kc-sp-opc-lance"}, names
+    for call in (
+        lambda: s3.put_bucket_policy(Bucket="kc-sp-opc-lance", Policy=_json.dumps(public)),
+        lambda: s3.create_bucket(Bucket=f"kc-probe-{uuid.uuid4().hex[:8]}"),
+    ):
+        with pytest.raises(ClientError) as exc:
+            call()
+        assert exc.value.response.get("Error", {}).get("Code") == "AccessDenied"

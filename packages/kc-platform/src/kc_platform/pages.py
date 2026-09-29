@@ -104,7 +104,8 @@ class PagesClient:
                     parent_id=p["parent_id"],
                     updated_date=datetime.fromisoformat(p["updated_date"]),
                     title=str(p["title"]),
-                    restricted=bool(p.get("restricted", False)),
+                    # Absent flag = restricted (fail closed, ADR-001).
+                    restricted=bool(p.get("restricted", True)),
                 )
                 for p in self._get(f"/api/spaces/{space}/pages").json()["pages"]
             ]

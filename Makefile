@@ -57,7 +57,8 @@ kind-up:
 MINIO_TAG    ?= RELEASE.2025-10-15T17-29-55Z
 MINIO_IMAGE  := kc/minio:$(MINIO_TAG)
 GENERATED    := deploy/.generated/values.yaml
-HELM_KC       = $(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --wait --timeout 10m
+HELM_KC       = $(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --wait --timeout 10m \
+               --set devTestRunner=true
 
 APP_IMAGE    ?= kc/app:dev
 TEST_IMAGE   ?= kc/test-runner:dev
