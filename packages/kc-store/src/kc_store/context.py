@@ -14,6 +14,7 @@ from pymongo import MongoClient
 from kc_graph import SpaceGraph
 from kc_graph.neo4j import Neo4jGraph
 from kc_labels import Labels, SpaceId
+from kc_store.index import LanceIndex, SpaceIndex
 from kc_store.mongo import MongoDocs
 from kc_store.s3 import S3Blobs
 from kc_store.space import SpaceStore, WrongSpace
@@ -39,6 +40,7 @@ class SpaceContext:
     space_id: SpaceId
     store: SpaceStore
     graph: SpaceGraph
+    index: SpaceIndex | None = None
     _closers: tuple[Any, ...] = field(default=(), repr=False)
 
     @property
@@ -101,6 +103,18 @@ def open_space(
         ep.neo4j or neo["uri"], auth=(neo["username"], neo["password"])
     )
     graph_backend = Neo4jGraph(driver)
+    s3_cfg = vault.kv(f"spaces/{space_id}/s3")
+    index = LanceIndex(
+        space_id,
+        f"s3://{s3_cfg['lance_bucket']}/index",
+        storage_options={
+            "aws_access_key_id": s3_cfg["access_key"],
+            "aws_secret_access_key": s3_cfg["secret_key"],
+            "aws_endpoint": ep.s3 or s3_cfg["endpoint"],
+            "aws_region": "us-east-1",
+            "allow_http": "true",
+        },
+    )
     return SpaceContext(
-        space_id, store, SpaceGraph(space_id, graph_backend), (mongo, graph_backend)
+        space_id, store, SpaceGraph(space_id, graph_backend), index, (mongo, graph_backend)
     )

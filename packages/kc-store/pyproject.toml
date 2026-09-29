@@ -3,7 +3,7 @@ name = "kc-store"
 version = "0.1.0"
 description = "SpaceContext and per-space encrypted MongoDB/MinIO adapters"
 requires-python = ">=3.14"
-dependencies = ["kc-labels", "kc-ids", "kc-graph", "kc-okf", "httpx>=0.27", "cryptography>=43", "pymongo>=4.10", "boto3>=1.35"]
+dependencies = ["kc-labels", "kc-ids", "kc-graph", "kc-okf", "httpx>=0.27", "cryptography>=43", "pymongo>=4.10", "boto3>=1.35", "lancedb>=0.25", "pyarrow>=18"]
 
 [tool.uv.sources]
 kc-labels = { workspace = true }

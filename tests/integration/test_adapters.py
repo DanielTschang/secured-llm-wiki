@@ -191,3 +191,42 @@ def test_find_and_delete_at_mongo(opc: SpaceContext) -> None:
     assert len(opc.store.course_claims(course)) == 2
     opc.store.replace_course_claims(course, [c], Labels.of([OPC]))
     assert len(opc.store.course_claims(course)) == 1
+
+
+def test_lance_index_in_the_space_lance_bucket(opc: SpaceContext, ports: dict[str, int]) -> None:
+    from kc_store.index import Chunk
+
+    assert opc.index is not None
+    opc.index.replace(
+        [
+            Chunk("p1", "page", "concepts/A.md", "光罩誤差放大因子 MEEF 門檻", [1.0, 0.0]),
+            Chunk("p2", "page", "concepts/B.md", "焦深 DOF", [0.0, 1.0]),
+        ]
+    )
+    assert opc.index.search_text("誤差放大", 1) == ["p1"]
+    assert opc.index.search_vector([0.0, 1.0], 1) == ["p2"]
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"http://127.0.0.1:{ports['minio']}",
+        aws_access_key_id=MINIO_ROOT[0],
+        aws_secret_access_key=MINIO_ROOT[1],
+        region_name="us-east-1",
+    )
+    assert s3.list_objects_v2(Bucket="kc-sp-opc-lance", Prefix="index/").get("KeyCount", 0) > 0
+
+
+def test_wiki_graph_roundtrip_in_neo4j(opc: SpaceContext) -> None:
+    from kc_graph.metrics import graph_metrics
+
+    pages = [{"path": "concepts/A.md", "kind": "concept", "concept_id": "concept:meef"},
+             {"path": "entities/D.md", "kind": "entity", "concept_id": None}]  # fmt: skip
+    edges = [
+        ("page", "concepts/A.md", "CITES", "slide", "opc_o2-s2"),
+        ("page", "entities/D.md", "CITES", "slide", "opc_o2-s2"),
+        ("page", "concepts/A.md", "ABOUT", "concept", "concept:meef"),
+    ]
+    opc.graph.replace_wiki_graph(pages, edges, opc.labels)
+    assert sorted(opc.graph.wiki_edges()) == sorted(edges)
+    props, similar = graph_metrics(opc.graph.wiki_edges())
+    opc.graph.write_metrics(props, similar, opc.labels)
+    assert similar  # A and D share a cited slide

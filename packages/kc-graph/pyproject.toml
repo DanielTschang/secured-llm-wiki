@@ -3,7 +3,7 @@ name = "kc-graph"
 version = "0.1.0"
 description = "Per-space Neo4j adapter"
 requires-python = ">=3.14"
-dependencies = ["kc-labels", "kc-ids", "neo4j>=5.26"]
+dependencies = ["kc-labels", "kc-ids", "neo4j>=5.26", "networkx>=3.4"]
 
 [tool.uv.sources]
 kc-labels = { workspace = true }
