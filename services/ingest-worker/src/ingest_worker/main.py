@@ -14,7 +14,7 @@ from nats.js import JetStreamContext
 
 from ingest_worker.broker import Decision, Launcher, decide
 from ingest_worker.hardening import harden_process
-from ingest_worker.runner import SocketRunner
+from ingest_worker.runner import SpaceRouter
 from kc_labels import SpaceId
 from kc_obs import configure_logging, get_logger
 from kc_store.vault import VaultClient, VaultError
@@ -22,7 +22,7 @@ from kc_store.vault import VaultClient, VaultError
 log = get_logger("ingest_broker")
 STREAM = "KC_PAGES"
 SA_TOKEN = Path(os.environ.get("KC_SA_TOKEN_PATH", "/var/run/secrets/kc/vault-token"))
-RUNNER_SOCKET = Path(os.environ.get("KC_RUNNER_SOCKET", "/run/kc/runner.sock"))
+RUNNER_SOCKET_ROOT = Path(os.environ.get("KC_RUNNER_SOCKET_ROOT", "/run/kc"))
 
 
 class RefreshingBrokerVault:
@@ -75,7 +75,7 @@ async def amain() -> None:
     spaces = [SpaceId(s) for s in os.environ["KC_SPACES"].split(",")]
     vault_addr = os.environ.get("KC_VAULT_ADDR", "http://kc-vault:8200")
     broker = RefreshingBrokerVault(httpx.Client(base_url=vault_addr, timeout=30))
-    launcher = Launcher(broker, SocketRunner(RUNNER_SOCKET))
+    launcher = Launcher(broker, SpaceRouter(RUNNER_SOCKET_ROOT))
     login = broker.kv("nats/ingest")
     nc = await nats.connect(  # pyright: ignore[reportUnknownMemberType]
         os.environ.get("KC_NATS_URL", "nats://kc-nats:4222"),

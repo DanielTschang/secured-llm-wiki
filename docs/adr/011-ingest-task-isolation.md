@@ -1,6 +1,6 @@
 # ADR-011：ingest 任務之間的隔離（M2 前置條件）
 
-- 狀態：提議（待決定）
+- 狀態：已採納（方案 2：每個 space 一個 runner）
 - 日期：2026-09-29
 - 相關：ADR-006（第 3 點：子行程只持有該 space 的短時效憑證）
 
@@ -15,9 +15,11 @@ M1 的 leak review 指出，在「任務子行程被入侵」的威脅模型下�
 
 ADR-006 只宣稱防程式 bug、不防主行程被入侵；它沒有處理「子行程被入侵」。同 UID 的行程無法以檔案權限區分 runner 與任務，所以這不是修一行設定就能解決的問題。
 
-## 決策（待選）
+## 決策
 
-在 M2 開始解析文件之前，擇一：
+**採納方案 2。** ingest-worker Pod 由一個 broker 與每個 space 一個 `runner-<space>` container 組成；每個 runner 有自己的 socket 目錄，只與 broker 共用，並拒絕其他 space 的任務。被入侵的任務最多只能影響自己 space 的 runner 與 token。
+
+評估過的選項：
 
 1. **每個任務一個 Pod（或 Job）**：由 broker 以 k8s API 建立短命 Pod，只掛該任務的子 token（經 projected volume 或 init 交付），任務之間沒有共用的檔案系統、PID 或 socket。隔離最強；每任務有冷啟動成本，broker 需要建立 Pod 的 RBAC。
 2. **每個 space 一個 runner container（或 Deployment）**：runner 只接收自己 space 的任務，socket 目錄只在 broker 與該 runner 之間共用。同 space 的任務仍同 UID，但跨 space 的路徑消失。資源隨 space 數量成長。
@@ -26,7 +28,8 @@ ADR-006 只宣稱防程式 bug、不防主行程被入侵；它沒有處理「�
 
 ## 影響
 
-- 決定前，architecture.md §16 將此列為已知缺口，且標為 M2 前置條件。
+- 同一 space 的任務之間仍同 UID、共用該 space 的 runner；一個任務被入侵可影響同 space 的其他任務，但不跨 space（已列於 architecture §16）。
+- runner container 數量隨 space 數量成長；space 很多時再評估改為每 space 一個 Deployment 或方案 1。
 - 不論選哪一項，broker 發出子 token、任務 stdin 交付、non-dumpable、任務結束撤銷的機制都保留。
 
 ## 考慮過的替代方案

@@ -12,20 +12,22 @@ import socketserver
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Protocol
 
 from ingest_worker.broker import EXIT_STALE, TaskResult
 from ingest_worker.hardening import READY, harden_process
 from kc_events import PageEvent
+from kc_labels import SpaceId
 from kc_obs import configure_logging, get_logger
 
-__all__ = ["LocalRunner", "Runner", "SocketRunner", "serve", "task_env"]
+__all__ = ["LocalRunner", "Runner", "SocketRunner", "SpaceRouter", "serve", "task_env"]
 
 log = get_logger("ingest_runner")
 
 TASK_COMMAND = [sys.executable, "-m", "ingest_worker.task"]
-SOCKET = Path(os.environ.get("KC_RUNNER_SOCKET", "/run/kc/runner.sock"))
+SOCKET_ROOT = Path(os.environ.get("KC_RUNNER_SOCKET_ROOT", "/run/kc"))
 READY_TIMEOUT = 60.0
 
 
@@ -135,7 +137,20 @@ class SocketRunner:
             return TaskResult.FAILED
 
 
-def _handle(runner: Runner, line: bytes) -> TaskResult:
+class SpaceRouter:
+    """Broker side: send each event to its own space's runner (one socket per space)."""
+
+    def __init__(
+        self, root: Path, *, factory: Callable[[Path], Runner] = lambda p: SocketRunner(p)
+    ) -> None:
+        self._root = root
+        self._factory = factory
+
+    def run(self, event: PageEvent, token: str) -> TaskResult:
+        return self._factory(self._root / event.space_id / "runner.sock").run(event, token)
+
+
+def _handle(runner: Runner, space: SpaceId, line: bytes) -> TaskResult:
     try:
         req = json.loads(line)
         token = req.pop("token")
@@ -143,7 +158,11 @@ def _handle(runner: Runner, line: bytes) -> TaskResult:
             raise ValueError
         event = PageEvent.from_bytes(json.dumps(req).encode())
     except Exception:
-        log.warning("runner_request_rejected")
+        log.warning("runner_request_rejected", space_id=space)
+        return TaskResult.FAILED
+    if event.space_id != space:
+        # ADR-011: this runner (and every task it starts) serves one space only.
+        log.warning("runner_wrong_space", space_id=space)
         return TaskResult.FAILED
     return runner.run(event, token)
 
@@ -152,13 +171,15 @@ class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
-def serve(path: Path, runner: Runner) -> socketserver.UnixStreamServer:
-    """One request per connection; tasks for different spaces run concurrently."""
+def serve(path: Path, runner: Runner, *, space: str) -> socketserver.UnixStreamServer:
+    """The runner for one space (ADR-011). One request per connection."""
+    runner_space = SpaceId(space)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
-            result = _handle(runner, self.rfile.readline())
+            result = _handle(runner, runner_space, self.rfile.readline())
             self.wfile.write(json.dumps({"result": result.value}).encode() + b"\n")
 
     server = _Server(str(path), Handler)
@@ -173,7 +194,8 @@ def main() -> None:
         vault_addr=os.environ.get("KC_VAULT_ADDR", "http://kc-vault:8200"),
         mongo_host=os.environ.get("KC_MONGO_HOST", "kc-mongodb:27017"),
     )
-    server = serve(SOCKET, runner)
+    space = SpaceId(os.environ["KC_RUNNER_SPACE"])
+    server = serve(SOCKET_ROOT / space / "runner.sock", runner, space=space)
     log.info("runner_started")
     server.serve_forever()
 

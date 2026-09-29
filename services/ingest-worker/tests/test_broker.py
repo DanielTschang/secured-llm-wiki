@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ingest_worker.broker import Decision, Launcher, TaskResult, decide
-from ingest_worker.runner import LocalRunner, SocketRunner, serve, task_env
+from ingest_worker.runner import LocalRunner, SocketRunner, SpaceRouter, serve, task_env
 from kc_events import PageEvent
 
 EVENT = PageEvent.of(space_id="sp_opc", page_id="opc_o1", revision=2)
@@ -108,7 +108,7 @@ def test_socket_runner_roundtrip(tmp_path: Path) -> None:
 
     out = tmp_path / "task.json"
     sock = short_socket_path()
-    server = serve(sock, local(dump_cmd(out)))
+    server = serve(sock, local(dump_cmd(out)), space="sp_opc")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         assert Launcher(FakeBrokerVault(), SocketRunner(sock)).run(EVENT) is TaskResult.DONE
@@ -123,7 +123,7 @@ def test_runner_rejects_malformed_requests(tmp_path: Path) -> None:
 
     ran = tmp_path / "ran"
     sock = short_socket_path()
-    server = serve(sock, local([sys.executable, "-c", f"open({str(ran)!r},'w')"]))
+    server = serve(sock, local([sys.executable, "-c", f"open({str(ran)!r},'w')"]), space="sp_opc")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for bad in (
@@ -193,3 +193,39 @@ def test_bad_messages_terminated_without_launch(subject: str, data: bytes) -> No
     launcher = StubLauncher(TaskResult.DONE)
     assert decide(subject, data, launcher) is Decision.TERM
     assert launcher.seen == []
+
+
+def test_runner_refuses_other_spaces(tmp_path: Path) -> None:
+    """ADR-011: a space's runner only ever runs (and receives tokens for) its own space."""
+    import threading
+
+    ran = tmp_path / "ran"
+    sock = short_socket_path()
+    cmd = task_cmd(f"open({str(ran)!r},'w')")
+    server = serve(sock, local(cmd), space="sp_cd")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert Launcher(FakeBrokerVault(), SocketRunner(sock)).run(EVENT) is TaskResult.FAILED
+        assert not ran.exists()
+    finally:
+        server.shutdown()
+
+
+def test_router_sends_each_space_to_its_own_socket() -> None:
+    seen: list[tuple[str, str]] = []
+
+    class Recorder:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def run(self, event: PageEvent, token: str) -> TaskResult:
+            seen.append((str(self.path), event.space_id))
+            return TaskResult.DONE
+
+    router = SpaceRouter(Path("/run/kc"), factory=Recorder)
+    for space in ("sp_opc", "sp_cd"):
+        router.run(PageEvent.of(space_id=space, page_id="p1", revision=1), "t")
+    assert seen == [
+        ("/run/kc/sp_opc/runner.sock", "sp_opc"),
+        ("/run/kc/sp_cd/runner.sock", "sp_cd"),
+    ]

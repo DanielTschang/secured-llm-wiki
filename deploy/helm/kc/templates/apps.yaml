@@ -53,10 +53,13 @@ spec:
             {{- include "kc.vaultTokenVolume" . | nindent 12 }}
             - { name: tmp, emptyDir: {} }
 ---
-# ingest-worker (ADR-006). Two containers, separate PID namespaces:
-#   broker: holds the ServiceAccount token, consumes NATS, mints single-space child tokens.
-#   runner: no ServiceAccount token; runs one subprocess per task, token passed on stdin.
-# They share only the socket directory. No platform access and no outbound path.
+# ingest-worker (ADR-006, ADR-011). Separate containers, separate PID namespaces:
+#   broker:          holds the ServiceAccount token, consumes NATS, mints child tokens,
+#                    routes each task to its own space's runner.
+#   runner-<space>:  one per space, no ServiceAccount token; runs that space's tasks only,
+#                    token on stdin. Its socket volume is shared with the broker alone, so
+#                    a compromised task cannot reach another space's runner or tokens.
+# No platform access and no outbound path.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -80,30 +83,37 @@ spec:
           command: ["python", "-m", "ingest_worker.main"]
           env:
             {{- include "kc.appEnv" . | nindent 12 }}
-            - { name: KC_RUNNER_SOCKET, value: /run/kc/runner.sock }
+            - { name: KC_RUNNER_SOCKET_ROOT, value: /run/kc }
           {{- include "kc.containerSecurity" . | nindent 10 }}
           volumeMounts:
             - { name: vault-token, mountPath: /var/run/secrets/kc, readOnly: true }
-            - { name: runner-socket, mountPath: /run/kc }
             - { name: broker-tmp, mountPath: /tmp }
-        - name: runner
-          image: {{ .Values.images.app }}
+            {{- range .Values.spaces }}
+            - { name: socket-{{ include "kc.dns" .id }}, mountPath: /run/kc/{{ .id }} }
+            {{- end }}
+        {{- range .Values.spaces }}
+        - name: runner-{{ include "kc.dns" .id }}
+          image: {{ $.Values.images.app }}
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ingest_worker.runner"]
           env:
+            - { name: KC_RUNNER_SPACE, value: {{ .id | quote }} }
+            - { name: KC_RUNNER_SOCKET_ROOT, value: /run/kc }
             - { name: KC_VAULT_ADDR, value: "http://kc-vault:8200" }
             - { name: KC_MONGO_HOST, value: "kc-mongodb:27017" }
-            - { name: KC_RUNNER_SOCKET, value: /run/kc/runner.sock }
             - { name: HOME, value: /tmp }
-          {{- include "kc.containerSecurity" . | nindent 10 }}
+          {{- include "kc.containerSecurity" $ | nindent 10 }}
           volumeMounts:
-            - { name: runner-socket, mountPath: /run/kc }
-            - { name: runner-tmp, mountPath: /tmp }
+            - { name: socket-{{ include "kc.dns" .id }}, mountPath: /run/kc/{{ .id }} }
+            - { name: tmp-{{ include "kc.dns" .id }}, mountPath: /tmp }
+        {{- end }}
       volumes:
         {{- include "kc.vaultTokenVolume" . | nindent 8 }}
-        - { name: runner-socket, emptyDir: {} }
         - { name: broker-tmp, emptyDir: {} }
-        - { name: runner-tmp, emptyDir: {} }
+        {{- range .Values.spaces }}
+        - { name: socket-{{ include "kc.dns" .id }}, emptyDir: {} }
+        - { name: tmp-{{ include "kc.dns" .id }}, emptyDir: {} }
+        {{- end }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

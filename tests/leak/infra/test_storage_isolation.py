@@ -116,8 +116,9 @@ def test_task_credentials_are_single_space_in_cluster() -> None:
         kubectl("-n", NAMESPACE, "delete", "job", name, "--wait=false", check=False)
 
 
-def test_runner_container_has_no_broker_credentials() -> None:
-    """Tasks run in the runner container: no ServiceAccount token, no view of the broker."""
+def test_space_runner_is_isolated_from_broker_and_other_spaces() -> None:
+    """ADR-011: runner-sp_cd has no ServiceAccount token, no view of the broker or of any
+    other space's runner, and no access to another space's socket directory."""
     if not local_cluster_ok():
         pytest.skip("local cluster not available")
     check = (
@@ -125,18 +126,22 @@ def test_runner_container_has_no_broker_credentials() -> None:
         "print('SA_TOKEN', os.path.exists('/var/run/secrets/kc/vault-token'));"
         "sa='/var/run/secrets/kubernetes.io/serviceaccount/token';"
         "print('SA_DEFAULT', os.path.exists(sa));"
+        "print('OWN_SOCKET', os.path.exists('/run/kc/sp_cd/runner.sock'));"
+        "print('OPC_DIR', os.path.exists('/run/kc/sp_opc'));"
         "procs=pathlib.Path('/proc').glob('[0-9]*');"
         "cmds=[pathlib.Path(p,'cmdline').read_bytes() for p in procs];"
-        # Build the needles at run time so this probe's own command line cannot match.
+        # Needles built at run time so this probe's own command line cannot match.
         "m=b'ingest_worker'+b'.main';r=b'ingest_worker'+b'.runner';"
         "print('SEES_BROKER', any(m in c for c in cmds));"
-        "print('SEES_RUNNER', any(r in c for c in cmds))"
+        "print('RUNNERS', sum(r in c for c in cmds))"
     )
     out = kubectl(
-        "-n", NAMESPACE, "exec", "deploy/kc-ingest-worker", "-c", "runner", "--",
+        "-n", NAMESPACE, "exec", "deploy/kc-ingest-worker", "-c", "runner-sp-cd", "--",
         "python", "-c", check,
     )  # fmt: skip
-    assert "SEES_RUNNER True" in out, out  # positive control: the probe works
+    assert "OWN_SOCKET True" in out, out  # positive control: its own space works
+    assert "RUNNERS 1" in out, out  # sees exactly itself
     assert "SA_TOKEN False" in out, out
     assert "SA_DEFAULT False" in out, out
+    assert "OPC_DIR False" in out, out
     assert "SEES_BROKER False" in out, out
