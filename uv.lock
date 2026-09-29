@@ -9,11 +9,13 @@ members = [
     "kc-graph",
     "kc-ids",
     "kc-labels",
+    "kc-models",
     "kc-obs",
     "kc-platform",
     "kc-store",
     "knowledge-center",
     "mock-platform",
+    "model-gateway",
     "sync",
 ]
 
@@ -551,9 +553,11 @@ dependencies = [
     { name = "kc-graph" },
     { name = "kc-ids" },
     { name = "kc-labels" },
+    { name = "kc-models" },
     { name = "kc-obs" },
     { name = "kc-store" },
     { name = "nats-py" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
@@ -562,9 +566,11 @@ requires-dist = [
     { name = "kc-graph", editable = "packages/kc-graph" },
     { name = "kc-ids", editable = "packages/kc-ids" },
     { name = "kc-labels", editable = "packages/kc-labels" },
+    { name = "kc-models", editable = "packages/kc-models" },
     { name = "kc-obs", editable = "packages/kc-obs" },
     { name = "kc-store", editable = "packages/kc-store" },
     { name = "nats-py", specifier = ">=2.9" },
+    { name = "pydantic", specifier = ">=2.9" },
 ]
 
 [[package]]
@@ -628,6 +634,17 @@ source = { editable = "packages/kc-ids" }
 name = "kc-labels"
 version = "0.1.0"
 source = { editable = "packages/kc-labels" }
+
+[[package]]
+name = "kc-models"
+version = "0.1.0"
+source = { editable = "packages/kc-models" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
 
 [[package]]
 name = "kc-obs"
@@ -703,11 +720,13 @@ dev = [
     { name = "kc-graph" },
     { name = "kc-ids" },
     { name = "kc-labels" },
+    { name = "kc-models" },
     { name = "kc-obs" },
     { name = "kc-platform" },
     { name = "kc-store" },
     { name = "minio" },
     { name = "mock-platform" },
+    { name = "model-gateway" },
     { name = "nats-py" },
     { name = "pyright" },
     { name = "pytest" },
@@ -731,11 +750,13 @@ dev = [
     { name = "kc-graph", editable = "packages/kc-graph" },
     { name = "kc-ids", editable = "packages/kc-ids" },
     { name = "kc-labels", editable = "packages/kc-labels" },
+    { name = "kc-models", editable = "packages/kc-models" },
     { name = "kc-obs", editable = "packages/kc-obs" },
     { name = "kc-platform", editable = "packages/kc-platform" },
     { name = "kc-store", editable = "packages/kc-store" },
     { name = "minio", specifier = ">=7.2.15" },
     { name = "mock-platform", editable = "services/mock-platform" },
+    { name = "model-gateway", editable = "services/model-gateway" },
     { name = "nats-py", specifier = ">=2.9" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8" },
@@ -798,6 +819,25 @@ requires-dist = [
     { name = "cryptography", specifier = ">=43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "model-gateway"
+version = "0.1.0"
+source = { editable = "services/model-gateway" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "kc-obs" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "kc-obs", editable = "packages/kc-obs" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

@@ -9,7 +9,7 @@ COPY packages packages
 COPY services services
 
 FROM base AS app
-RUN uv sync --frozen --no-dev --package sync --package ingest-worker
+RUN uv sync --frozen --no-dev --package sync --package ingest-worker --package model-gateway
 ENV PATH=/app/.venv/bin:$PATH
 USER 65532:65532
 

@@ -21,6 +21,8 @@ kc-store = { workspace = true }
 kc-graph = { workspace = true }
 sync = { workspace = true }
 ingest-worker = { workspace = true }
+kc-models = { workspace = true }
+model-gateway = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -34,6 +36,8 @@ dev = [
     "kc-graph",
     "sync",
     "ingest-worker",
+    "kc-models",
+    "model-gateway",
     "pytest>=8",
     "hypothesis>=6",
     "ruff>=0.6",
@@ -81,4 +85,4 @@ venvPath = "."
 venv = ".venv"
 
 [tool.ruff.lint.isort]
-known-first-party = ["kc_labels", "kc_platform", "kc_ids", "kc_obs", "kc_events", "kc_store", "kc_graph", "mock_platform", "sync", "ingest_worker", "tests"]
+known-first-party = ["kc_labels", "kc_platform", "kc_ids", "kc_obs", "kc_events", "kc_store", "kc_graph", "kc_models", "mock_platform", "model_gateway", "sync", "ingest_worker", "tests"]

@@ -57,8 +57,10 @@ kind-up:
 MINIO_TAG    ?= RELEASE.2025-10-15T17-29-55Z
 MINIO_IMAGE  := kc/minio:$(MINIO_TAG)
 GENERATED    := deploy/.generated/values.yaml
+# The model server runs on the host (Ollama); pods reach it via host.docker.internal.
+MODEL_UPSTREAM_IP = $(shell docker exec $(CLUSTER)-control-plane getent ahostsv4 host.docker.internal 2>/dev/null | awk 'NR==1{print $$1}')
 HELM_KC       = $(HELM) upgrade --install kc deploy/helm/kc --namespace $(NAMESPACE) --wait --timeout 10m \
-               --set devTestRunner=true
+               --set devTestRunner=true --set model.upstreamIP=$(MODEL_UPSTREAM_IP)
 
 APP_IMAGE    ?= kc/app:dev
 TEST_IMAGE   ?= kc/test-runner:dev

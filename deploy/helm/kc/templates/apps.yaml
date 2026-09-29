@@ -98,6 +98,9 @@ spec:
           command: ["python", "-m", "ingest_worker.runner"]
           env:
             - { name: KC_RUNNER_SPACE, value: {{ .id | quote }} }
+            - { name: KC_MODEL_BASE_URL, value: "http://kc-model-gateway:8080/v1" }
+            - { name: KC_MODEL_NAME, value: {{ $.Values.model.name | quote }} }
+            - { name: KC_MODEL_ALLOWED_HOSTS, value: kc-model-gateway }
             - { name: KC_RUNNER_SOCKET_ROOT, value: /run/kc }
             - { name: KC_VAULT_ADDR, value: "http://kc-vault:8200" }
             - { name: KC_MONGO_HOST, value: "kc-mongodb:27017" }
@@ -151,4 +154,8 @@ spec:
         - matchLabels: { kc.io/component: neo4j }
       toPorts:
         - ports: [{ port: "7687", protocol: TCP }]
+    - toEndpoints:
+        - matchLabels: { kc.io/component: model-gateway }
+      toPorts:
+        - ports: [{ port: "8080", protocol: TCP }]
 {{- end }}

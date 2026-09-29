@@ -1,0 +1,60 @@
+{{- if .Values.apps.enabled }}
+# model-gateway: the only path from the cluster to the model server. Ingest reaches it;
+# it reaches only the model server's IP and port. It logs no request or response bodies.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kc-model-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { kc.io/component: model-gateway }
+  template:
+    metadata:
+      labels: { kc.io/component: model-gateway }
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kc.podSecurity" (dict) | nindent 6 }}
+      containers:
+        - name: gateway
+          image: {{ .Values.images.app }}
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "--factory", "model_gateway.app:create_app_from_env",
+                    "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+          env:
+            - name: KC_MODEL_UPSTREAM
+              value: "http://{{ required "model.upstreamIP (set by make deploy)" .Values.model.upstreamIP }}:{{ .Values.model.upstreamPort }}/v1"
+            - { name: HOME, value: /tmp }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          {{- include "kc.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kc-model-gateway
+spec:
+  selector: { kc.io/component: model-gateway }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kc-model-gateway
+spec:
+  endpointSelector:
+    matchLabels: { kc.io/component: model-gateway }
+  ingress:
+    {{- include "kc.ingressFrom" (dict "from" (include "kc.clients" (list $ (list "ingest-worker")) | fromJsonArray) "port" 8080) | nindent 4 }}
+  egress:
+    - toCIDR: ["{{ .Values.model.upstreamIP }}/32"]
+      toPorts:
+        - ports: [{ port: "{{ .Values.model.upstreamPort }}", protocol: TCP }]
+{{- end }}

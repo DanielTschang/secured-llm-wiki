@@ -7,7 +7,9 @@ root_packages =
     kc_platform
     kc_store
     kc_graph
+    kc_models
     mock_platform
+    model_gateway
     sync
     ingest_worker
 include_external_packages = True
@@ -48,6 +50,7 @@ name = services never import each other
 type = independence
 modules =
     mock_platform
+    model_gateway
     sync
     ingest_worker
 

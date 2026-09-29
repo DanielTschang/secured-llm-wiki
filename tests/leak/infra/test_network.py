@@ -294,6 +294,7 @@ STORAGE = {
     "minio": "kc-minio 9000",
     "mongodb": "kc-mongodb 27017",
     "nats": "kc-nats 4222",
+    "model_gateway": "kc-model-gateway 8080",
 }
 
 
@@ -317,11 +318,37 @@ def test_storage_reachable_only_by_its_clients(cluster: str) -> None:
     plain = storage_reach(cluster, None)
     # Positive control: the ingest worker reaches everything it needs.
     assert set(worker.values()) == {"OPEN"}, worker
-    # Sync never touches the graph; everything else it needs is open.
-    assert sync == {
-        **{k: "OPEN" for k in STORAGE},
-        "neo4j_opc": "BLOCKED",
-        "neo4j_cd": "BLOCKED",
-    }, sync
+    # Sync never touches the graph or the model; everything else it needs is open.
+    no_access = {"neo4j_opc", "neo4j_cd", "model_gateway"}
+    assert sync == {k: ("BLOCKED" if k in no_access else "OPEN") for k in STORAGE}, sync
     # An unlabelled pod reaches nothing.
     assert set(plain.values()) == {"BLOCKED"}, plain
+
+
+def test_model_gateway_reaches_only_the_model_server(cluster: str) -> None:
+    """The gateway sees space content (prompts), so its only way out is the model server."""
+    upstream = kubectl(
+        cluster, "-n", NAMESPACE, "get", "deploy", "kc-model-gateway",
+        "-o", "jsonpath={.spec.template.spec.containers[0].env[0].value}",
+    )  # fmt: skip
+    host = upstream.split("//", 1)[1].split(":", 1)[0]
+    check = (
+        "import socket\n"
+        "def probe(h, p):\n"
+        "    try:\n"
+        "        socket.create_connection((h, p), 5).close(); return 'OPEN'\n"
+        "    except OSError:\n"
+        "        return 'BLOCKED'\n"
+        f"print('UPSTREAM', probe({host!r}, 11434))\n"
+        f"print('UPSTREAM_OTHER_PORT', probe({host!r}, 22))\n"
+        "print('INTERNET', probe('1.1.1.1', 443))\n"
+        "print('MINIO', probe('kc-minio', 9000))\n"
+        "print('VAULT', probe('kc-vault', 8200))\n"
+    )
+    out = kubectl(
+        cluster, "-n", NAMESPACE, "exec", "deploy/kc-model-gateway", "--",
+        "python", "-c", check,
+    )  # fmt: skip
+    assert "UPSTREAM OPEN" in out, out  # positive control
+    for blocked in ("UPSTREAM_OTHER_PORT", "INTERNET", "MINIO", "VAULT"):
+        assert f"{blocked} BLOCKED" in out, out

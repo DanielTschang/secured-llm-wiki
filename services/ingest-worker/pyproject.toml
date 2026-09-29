@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Ingest: one subprocess per task, holding only that space's short-lived credentials"
 requires-python = ">=3.14"
 dependencies = [
-    "kc-labels", "kc-ids", "kc-obs", "kc-events", "kc-store", "kc-graph", "nats-py>=2.9",
+    "kc-labels", "kc-ids", "kc-obs", "kc-events", "kc-store", "kc-graph", "kc-models",
+    "nats-py>=2.9", "pydantic>=2.9",
 ]
 
 [tool.uv.sources]
@@ -14,6 +15,7 @@ kc-obs = { workspace = true }
 kc-events = { workspace = true }
 kc-store = { workspace = true }
 kc-graph = { workspace = true }
+kc-models = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

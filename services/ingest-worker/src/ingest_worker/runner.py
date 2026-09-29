@@ -35,9 +35,15 @@ class Runner(Protocol):
     def run(self, event: PageEvent, token: str) -> TaskResult: ...
 
 
-def task_env(event: PageEvent, *, vault_addr: str, mongo_host: str) -> dict[str, str]:
+MODEL_ENV = ("KC_MODEL_BASE_URL", "KC_MODEL_NAME", "KC_MODEL_ALLOWED_HOSTS")
+
+
+def task_env(
+    event: PageEvent, *, vault_addr: str, mongo_host: str, model: dict[str, str] | None = None
+) -> dict[str, str]:
     """The task's entire environment: IDs and endpoints. Nothing inherited, no secrets."""
     return {
+        **{k: v for k, v in (model or {}).items() if k in MODEL_ENV},
         "KC_VAULT_ADDR": vault_addr,
         "KC_SPACE_ID": event.space_id,
         "KC_PAGE_ID": event.page_id,
@@ -64,9 +70,12 @@ class LocalRunner:
         self._command = command or TASK_COMMAND
         self._timeout = timeout
         self._ready_timeout = ready_timeout
+        self._model = {k: os.environ[k] for k in MODEL_ENV if k in os.environ}
 
     def run(self, event: PageEvent, token: str) -> TaskResult:
-        env = task_env(event, vault_addr=self._vault_addr, mongo_host=self._mongo_host)
+        env = task_env(
+            event, vault_addr=self._vault_addr, mongo_host=self._mongo_host, model=self._model
+        )
         # stderr passes through (the task logs only via kc_obs: IDs and numbers).
         proc = subprocess.Popen(  # noqa: S603
             self._command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True

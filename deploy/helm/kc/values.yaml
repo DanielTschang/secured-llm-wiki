@@ -16,6 +16,13 @@ devTestRunner: false
 sync:
   schedule: "*/15 * * * *"
 
+# On-prem model server, reached only through model-gateway (OpenAI-compatible API).
+# upstreamIP is the only address the gateway may connect to (set by `make deploy`).
+model:
+  name: qwen2.5vl:7b
+  upstreamIP: ""
+  upstreamPort: 11434
+
 images:
   app: kc/app:dev
   mockPlatform: kc/mock-platform:dev
